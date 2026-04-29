@@ -1,28 +1,31 @@
-use std::iter::Peekable;
+use std::{fmt::Debug, iter::Peekable};
 
-use lexer::{LexingError, Logos, Token};
+use lexer::{LexingError, Logos, Span, SpannedIter, Token};
 
 use crate::{
     ParsingError,
     ast::{Command, SpecialPattern},
 };
 
-#[derive(Debug)]
 pub struct Lexer<'a> {
-    inner: Peekable<lexer::Lexer<'a>>,
+    inner: Peekable<SpannedIter<'a, Token<'a>>>,
+    span: Span,
     // source: &'a [u8],
 }
+
+type LexItem<'a> = <Lexer<'a> as Iterator>::Item;
 
 impl<'a> Lexer<'a> {
     pub fn new(source: &'a [u8]) -> Self {
         Self {
-            inner: Token::lexer(source).peekable(),
+            inner: Token::lexer(source).spanned().peekable(),
+            span: Span::default(),
             // source,
         }
     }
 
-    pub fn peek(&mut self) -> Option<&<Self as Iterator>::Item> {
-        self.inner.peek()
+    pub fn peek(&mut self) -> Option<&LexItem<'a>> {
+        self.inner.peek().map(|(tok, _)| tok)
     }
 
     pub fn peek_with(&mut self, f: impl FnOnce(&Token<'a>) -> bool) -> bool {
@@ -85,11 +88,9 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn next_if(
-        &mut self,
-        f: impl FnOnce(&<Self as Iterator>::Item) -> bool,
-    ) -> Option<<Self as Iterator>::Item> {
-        self.inner.next_if(f)
+    pub fn next_if(&mut self, f: impl FnOnce(&LexItem<'a>) -> bool) -> Option<LexItem<'a>> {
+        let next = self.inner.next_if(|(tok, _)| f(tok));
+        self.advance_span(next)
     }
 
     pub fn expect_next(&mut self) -> super::Result<Token<'a>> {
@@ -107,13 +108,29 @@ impl<'a> Lexer<'a> {
             Some(Err(err)) => Err(ParsingError::LexingError(err.clone())),
         }
     }
+
+    pub fn span(&self) -> Span {
+        self.span.clone()
+    }
+
+    pub fn peek_span(&mut self) -> Option<Span> {
+        self.inner.peek().map(|(_, s)| s.clone())
+    }
+
+    fn advance_span(&mut self, next: Option<(LexItem<'a>, Span)>) -> Option<LexItem<'a>> {
+        next.map(|(token, span)| {
+            self.span = span.clone();
+            token
+        })
+    }
 }
 
 impl<'a> Iterator for Lexer<'a> {
     type Item = Result<Token<'a>, LexingError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next()
+        let next = self.inner.next();
+        self.advance_span(next)
     }
 }
 
@@ -200,5 +217,11 @@ impl TokenExt for Token<'_> {
     }
     fn is_brace(&self) -> bool {
         matches!(self, Token::OpenBrace | Token::ClosedBrace)
+    }
+}
+
+impl Debug for Lexer<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Lexer {{ span: {:?} }}", self.span)
     }
 }

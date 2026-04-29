@@ -5,7 +5,7 @@ use core::str;
 use std::{borrow::Cow, fmt::Debug, slice::SliceIndex};
 
 use logos::Skip;
-pub use logos::{Logos, Span};
+pub use logos::{Logos, Span, SpannedIter};
 use memchr::{memchr, memchr3};
 use thiserror::Error;
 
