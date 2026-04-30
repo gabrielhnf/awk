@@ -571,12 +571,12 @@ impl<'a> Parser<'a> {
                 }
                 lex.next();
                 lhs = Expr::node(
-                    operation.expr(
+                    reciprocal.expr(
                         Expr::node(
                             PlaceOperator::Assignment.expr(
                                 rhs,
                                 Expr::node(
-                                    reciprocal.expr(Expr::leaf(rhs), Expr::leaf(1.)),
+                                    operation.expr(Expr::leaf(rhs), Expr::leaf(1.)),
                                     self.arena,
                                 ),
                             ),
