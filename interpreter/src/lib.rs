@@ -24,4 +24,5 @@ impl Interpreter {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code)]
 enum InterpreterError {}

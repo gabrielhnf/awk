@@ -10,7 +10,7 @@ use std::process::exit;
 use color_eyre::config::HookBuilder;
 use rustix::process::{EXIT_FAILURE, EXIT_SUCCESS};
 use tracing_error::ErrorLayer;
-use tracing_subscriber::{EnvFilter, prelude::*};
+use tracing_subscriber::prelude::*;
 
 type ExitCode = i32;
 
@@ -60,6 +60,7 @@ pub fn ensure_consistent_panic<T>(f: impl UnwindSafe + FnOnce() -> T) -> T {
 }
 
 /// Exits with a custom exit code or libc's codes, as per POSIX.
+#[allow(dead_code)]
 pub fn exit_with(res: Result<Option<impl Into<ExitCode>>, impl Display + Debug>) -> ! {
     let code = match res {
         Ok(Some(x)) => x.into(),
