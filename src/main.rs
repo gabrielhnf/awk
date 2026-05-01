@@ -1,3 +1,8 @@
+// This file is part of the uutils awk package.
+//
+// For the full copyright and license information, please view the LICENSE
+// files that was distributed with this source code.
+
 // static POSIX: bool = false;
 
 mod utils;

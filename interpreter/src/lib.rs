@@ -1,3 +1,8 @@
+// This file is part of the uutils awk package.
+//
+// For the full copyright and license information, please view the LICENSE
+// files that was distributed with this source code.
+
 use color_eyre::eyre::Result;
 use either::Either;
 
@@ -19,4 +24,5 @@ impl Interpreter {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code)]
 enum InterpreterError {}
