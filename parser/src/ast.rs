@@ -127,7 +127,6 @@ pub enum BinaryOperator {
     Divide,
     Raise,
     Modulo,
-    InArray,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -409,7 +408,6 @@ impl BindingPower for BinaryOperator {
             Self::Divide => binding_powers::BP_MULTI,
             Self::Raise => binding_powers::BP_RAISE,
             Self::Modulo => binding_powers::BP_RAISE,
-            Self::InArray => binding_powers::BP_IN,
         }
     }
 }

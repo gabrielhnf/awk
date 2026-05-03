@@ -6,6 +6,7 @@
 
 mod ast;
 mod diagnostics;
+mod idempotency;
 mod lex;
 mod sexpr;
 #[cfg(test)]

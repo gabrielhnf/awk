@@ -38,7 +38,7 @@ fn uu_main() -> Result<()> {
             return Ok(());
         }
     };
-    println!("{:?}", ast.rules);
+    println!("{ast}");
     dbg!(arena.chunk_capacity());
 
     // for token in lex {
