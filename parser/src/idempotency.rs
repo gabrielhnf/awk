@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display, Formatter, Result, Write};
 
 use crate::{
-    Ast,
+    Ast, Function,
     ast::{
         Atom, BinaryOperator, BindingPower, Body, Command, Expr, ExprNode, PlaceOperator, Rule,
         RulePattern, Statement, Ternary, UnaryOperator,
@@ -46,6 +46,14 @@ impl Display for Ast<'_> {
             write!(f, "END ")?;
             write_body_ln(f, body, 0)?;
             writeln!(f)?;
+        }
+        for (fun, Function { args, body }) in &self.functions {
+            // GNU appears to place two newlines before functions.
+            // I think it's a bug but we'll keep it.
+            write!(f, "\nfunction {fun}(")?;
+            write_args(f, args, 0)?;
+            writeln!(f, ") ")?;
+            write_body_ln(f, body, 0)?;
         }
         Ok(())
     }
@@ -336,7 +344,7 @@ impl Display for Command {
     }
 }
 
-fn write_args(f: &mut Formatter<'_>, args: &[Expr<'_>], indent: u8) -> Result {
+fn write_args(f: &mut Formatter<'_>, args: &[impl Display], indent: u8) -> Result {
     let ew = encode(indent, 0);
     for (i, arg) in args.iter().enumerate() {
         if i != 0 {
