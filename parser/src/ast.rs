@@ -184,12 +184,7 @@ pub enum Getline<'a> {
 }
 
 pub enum Statement<'a> {
-    Expression(Expr<'a>),
-    Command {
-        name: Command,
-        args: Vec<'a, Expr<'a>>,
-        redirection: Option<Redirection<'a>>,
-    },
+    Simple(SimpleStatement<'a>),
     If {
         condition: Expr<'a>,
         then_body: Body<'a>,
@@ -203,12 +198,10 @@ pub enum Statement<'a> {
         then_body: Body<'a>,
         condition: Expr<'a>,
     },
-    // TODO: Maybe Expr is too restrictive for init & update.
-    // Maybe a subset of Statement?
     For {
-        init: Option<Expr<'a>>,
+        init: Option<SimpleStatement<'a>>,
         condition: Option<Expr<'a>>,
-        update: Option<Expr<'a>>,
+        update: Option<SimpleStatement<'a>>,
         body: Body<'a>,
     },
     ForEach {
@@ -227,6 +220,16 @@ pub enum Statement<'a> {
     Next,
     NextFile,
     Exit(Option<Expr<'a>>),
+}
+
+pub enum SimpleStatement<'a> {
+    Expression(Expr<'a>),
+    Command {
+        name: Command,
+        args: Vec<'a, Expr<'a>>,
+        redirection: Option<Redirection<'a>>,
+    },
+    Delete(Variable<'a>, Option<Expr<'a>>),
 }
 
 #[derive(Debug)]

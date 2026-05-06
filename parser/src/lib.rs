@@ -25,7 +25,7 @@ pub use crate::lex::Lexer;
 use crate::{
     ast::{
         Atom, BinaryPlaceOperator, Body, Command, Expr, ExprNode, Function, Identifier, Pattern,
-        Rule, RulePattern, SpecialPattern, Statement, Variable,
+        Rule, RulePattern, SimpleStatement, SpecialPattern, Statement, Variable,
     },
     diagnostics::{ParsingError, report_error},
     lex::TokenExt,
@@ -213,14 +213,35 @@ impl<'a> Parser<'a> {
             }
         }
     }
+    #[tracing::instrument]
+    fn parse_simple_statement(
+        &mut self,
+        lex: &mut Lexer<'a>,
+    ) -> Option<Result<SimpleStatement<'a>>> {
+        let peek = lex.expect_peek().ok()?;
+        if peek.is_expr_start() {
+            Some(self.parse_expression(lex).map(SimpleStatement::Expression))
+        } else {
+            match peek {
+                token if let Some(name) = token.maps_to_command() => {
+                    lex.next();
+                    Some(self.parse_command(lex, name))
+                }
+                Token::Delete => {
+                    lex.next();
+                    Some(self.parse_delete(lex))
+                }
+                _ => None,
+            }
+        }
+    }
 
     #[tracing::instrument]
     fn parse_statement(&mut self, lex: &mut Lexer<'a>) -> Result<Statement<'a>> {
-        let statement = if lex.expect_peek()?.is_expr_start() {
-            self.parse_expression(lex).map(Statement::Expression)?
+        let statement = if let Some(statement) = self.parse_simple_statement(lex) {
+            Statement::Simple(statement?)
         } else {
             match lex.expect_next()? {
-                tok if let Some(name) = tok.maps_to_command() => self.parse_command(lex, name)?,
                 Token::If => {
                     let condition = self.parse_parenthesized_expr(lex)?;
                     let then_body = self.parse_statement_body(lex)?;
@@ -239,42 +260,19 @@ impl<'a> Parser<'a> {
                     // for (ident in ident; expr; expr) as a syntax error.
                     // It seems like a bug to me.
                     lex.expect(&Token::OpenParent, ParsingError::ExpectedOpeningParenthesis)?;
-                    let init = (!lex.consume(&Token::Semicolon))
-                        .then(|| self.parse_expression(lex))
-                        .transpose()?;
-                    if init.is_none() || lex.consume(&Token::Semicolon) {
-                        let condition = self.parse_for_fragment::<false>(lex)?;
-                        let update = self.parse_for_fragment::<true>(lex)?;
-                        let body = self.parse_statement_body(lex)?;
-                        Statement::For {
-                            init,
-                            condition,
-                            update,
-                            body,
-                        }
+                    let init = if lex.consume(&Token::Semicolon) {
+                        None
                     } else {
-                        let Some(Expr::Node(node)) = init else {
+                        let Some(stmnt) = self.parse_simple_statement(lex) else {
                             return Err(ParsingError::InvalidForLoop(lex.span()));
                         };
-                        let ExprNode::BinaryPlaceOperation(
-                            BinaryPlaceOperator::InArray,
-                            ast::Place::Variable(variable),
-                            Expr::Leaf(Atom::Variable(array)),
-                        ) = Box::into_inner(node)
-                        else {
-                            return Err(ParsingError::InvalidForLoop(lex.span()));
-                        };
-                        lex.expect(
-                            &Token::ClosedParent,
-                            ParsingError::UnclosedParenthesisInStatement,
-                        )?;
-                        let body = self.parse_statement_body(lex)?;
-                        Statement::ForEach {
-                            variable,
-                            array,
-                            body,
-                        }
-                    }
+                        Some(stmnt?)
+                    };
+                    if init.is_none() || lex.consume(&Token::Semicolon) {
+                        self.parse_for_loop(lex, init)
+                    } else {
+                        self.parse_for_each(lex, init)
+                    }?
                 }
                 Token::Switch => {
                     let scrutinee = self.parse_parenthesized_expr(lex)?;
@@ -386,22 +384,65 @@ impl<'a> Parser<'a> {
     }
 
     #[tracing::instrument]
-    fn parse_for_fragment<const END: bool>(
+    fn parse_for_loop(
         &mut self,
         lex: &mut Lexer<'a>,
-    ) -> Result<Option<Expr<'a>>> {
-        let next = if END {
-            Token::ClosedParent
+        init: Option<SimpleStatement<'a>>,
+    ) -> Result<Statement<'a>> {
+        lex.consume(&Token::Newline);
+        let condition = (!lex.peek_is(&Token::Semicolon))
+            .then(|| self.parse_expression(lex))
+            .transpose()?;
+        lex.expect(&Token::Semicolon, ParsingError::InvalidForLoop)?;
+
+        lex.consume(&Token::Newline);
+        let update = if lex.peek_is(&Token::ClosedParent) {
+            None
         } else {
-            Token::Semicolon
+            let Some(stmnt) = self.parse_simple_statement(lex) else {
+                return Err(ParsingError::InvalidForLoop(lex.span()));
+            };
+            Some(stmnt?)
         };
-        if lex.consume(&next) {
-            Ok(None)
-        } else {
-            let expr = self.parse_expression(lex)?;
-            lex.expect(&next, ParsingError::InvalidForLoop)?;
-            Ok(Some(expr))
-        }
+
+        lex.expect(&Token::ClosedParent, ParsingError::InvalidForLoop)?;
+        let body = self.parse_statement_body(lex)?;
+        Ok(Statement::For {
+            init,
+            condition,
+            update,
+            body,
+        })
+    }
+
+    #[tracing::instrument]
+    fn parse_for_each(
+        &mut self,
+        lex: &mut Lexer<'a>,
+        expr: Option<SimpleStatement<'a>>,
+    ) -> Result<Statement<'a>> {
+        let Some(SimpleStatement::Expression(Expr::Node(node))) = expr else {
+            return Err(ParsingError::InvalidForLoop(lex.span()));
+        };
+        let ExprNode::BinaryPlaceOperation(
+            BinaryPlaceOperator::InArray,
+            ast::Place::Variable(variable),
+            Expr::Leaf(Atom::Variable(array)),
+        ) = Box::into_inner(node)
+        else {
+            return Err(ParsingError::InvalidForLoop(lex.span()));
+        };
+
+        lex.expect(
+            &Token::ClosedParent,
+            ParsingError::UnclosedParenthesisInStatement,
+        )?;
+        let body = self.parse_statement_body(lex)?;
+        Ok(Statement::ForEach {
+            variable,
+            array,
+            body,
+        })
     }
 
     #[tracing::instrument]
@@ -426,9 +467,13 @@ impl<'a> Parser<'a> {
     }
 
     #[tracing::instrument]
-    fn parse_command(&mut self, lex: &mut Lexer<'a>, command: Command) -> Result<Statement<'a>> {
+    fn parse_command(
+        &mut self,
+        lex: &mut Lexer<'a>,
+        command: Command,
+    ) -> Result<SimpleStatement<'a>> {
         let parent = lex.consume(&Token::OpenParent);
-        let command = Statement::Command {
+        let command = SimpleStatement::Command {
             name: command,
             args: self.parse_arguments(lex, |t| {
                 if parent {
@@ -465,6 +510,21 @@ impl<'a> Parser<'a> {
             arguments.push(self.parse_expression(lex)?);
         }
         Ok(arguments)
+    }
+
+    fn parse_delete(&mut self, lex: &mut Lexer<'a>) -> Result<SimpleStatement<'a>> {
+        let next = lex.expect_next()?;
+        let Some(var) = self.get_place(lex, next) else {
+            return Err(ParsingError::OperatorExpectsVariable(lex.span()));
+        };
+        let index = if lex.consume(&Token::OpenBracket) {
+            let mut pratt = Pratt::new(self);
+            let first = pratt.parse(lex)?;
+            Some(pratt.parse_array_index(lex, first)?)
+        } else {
+            None
+        };
+        Ok(SimpleStatement::Delete(var, index))
     }
 
     #[tracing::instrument]
@@ -517,7 +577,7 @@ impl<'a> Parser<'a> {
 
     #[tracing::instrument]
     fn parse_expression(&mut self, lex: &mut Lexer<'a>) -> Result<Expr<'a>> {
-        Pratt::parse(self, lex)
+        Pratt::new(self).parse(lex)
     }
 
     #[tracing::instrument]

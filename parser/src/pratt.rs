@@ -15,8 +15,12 @@ pub struct Pratt<'a, 'b> {
 }
 
 impl<'a, 'b> Pratt<'a, 'b> {
-    pub fn parse(parser: &'b mut Parser<'a>, lex: &mut Lexer<'a>) -> Result<Expr<'a>> {
-        Self { parser }.parse_expression(lex, 0)
+    pub fn new(parser: &'b mut Parser<'a>) -> Self {
+        Self { parser }
+    }
+
+    pub fn parse(&mut self, lex: &mut Lexer<'a>) -> Result<Expr<'a>> {
+        self.parse_expression(lex, 0)
     }
 
     fn parse_lhs(&mut self, lex: &mut Lexer<'a>) -> Result<Expr<'a>> {
@@ -168,22 +172,28 @@ impl<'a, 'b> Pratt<'a, 'b> {
             if !matches!(place, Place::Variable(_)) {
                 return Err(ParsingError::OperatorExpectsVariable(lex.span()));
             }
-            while lex.consume(&Token::Comma) {
-                rhs = Expr::node(
-                    BinaryOperator::Concat.expr(
-                        rhs,
-                        Expr::node(
-                            BinaryOperator::Concat
-                                .expr(Expr::leaf(Variable::Subsep), self.parse_expression(lex, 0)?),
-                            self.parser.arena,
-                        ),
-                    ),
-                    self.parser.arena,
-                );
-            }
-            lex.expect(&Token::ClosedBracket, ParsingError::UnclosedArrayAccess)?;
+            rhs = self.parse_array_index(lex, rhs)?;
         }
         Ok(Expr::node(op.expr(place, rhs), self.parser.arena))
+    }
+
+    pub fn parse_array_index(&mut self, lex: &mut Lexer<'a>, lhs: Expr<'a>) -> Result<Expr<'a>> {
+        let mut rhs = lhs;
+        while lex.consume(&Token::Comma) {
+            rhs = Expr::node(
+                BinaryOperator::Concat.expr(
+                    rhs,
+                    Expr::node(
+                        BinaryOperator::Concat
+                            .expr(Expr::leaf(Variable::Subsep), self.parse_expression(lex, 0)?),
+                        self.parser.arena,
+                    ),
+                ),
+                self.parser.arena,
+            );
+        }
+        lex.expect(&Token::ClosedBracket, ParsingError::UnclosedArrayAccess)?;
+        Ok(rhs)
     }
 
     fn parse_ternary(&mut self, lex: &mut Lexer<'a>, lhs: Expr<'a>) -> Result<Expr<'a>> {

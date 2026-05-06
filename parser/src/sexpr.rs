@@ -5,7 +5,7 @@
 
 use std::fmt::{Debug, Display, Formatter, Result};
 
-use crate::ast::{Atom, Body, Expr, Identifier, Place, Statement, Variable};
+use crate::ast::{Atom, Body, Identifier, Place, SimpleStatement, Statement, Variable};
 
 const PRETTY_PRINT_INDENT: usize = 2;
 
@@ -19,32 +19,7 @@ impl Debug for Statement<'_> {
         let (alt, ni, pad) = fmt_vars(f);
 
         match self {
-            Statement::Expression(expr) => {
-                if alt {
-                    write!(f, "{expr:#ni$?}")
-                } else {
-                    write!(f, "{expr:?}")
-                }
-            }
-            Self::Command {
-                name,
-                args,
-                redirection,
-            } => {
-                if let Some(rx) = redirection {
-                    if alt {
-                        write!(
-                            f,
-                            "(redir {rx:?}\n{pad}({name:?}{:#ni$?}))",
-                            ListLispFmt(args),
-                        )
-                    } else {
-                        write!(f, "(redir {rx:?} ({name:?}{:?}))", ListLispFmt(args))
-                    }
-                } else {
-                    write!(f, "({name:?}{:?})", ListLispFmt(args))
-                }
-            }
+            Statement::Simple(simple) => <_ as Debug>::fmt(simple, f),
             Self::If {
                 condition,
                 then_body,
@@ -96,16 +71,16 @@ impl Debug for Statement<'_> {
             } => {
                 if alt {
                     write!(f, "(for")?;
-                    let write_fragment = |f: &mut Formatter, x: &Option<Expr>| {
+                    let write_fragment = |f: &mut Formatter, x: Option<&dyn Debug>| {
                         if let Some(x) = x {
                             write!(f, "\n{pad}{x:?}")
                         } else {
                             write!(f, "\n{pad}None")
                         }
                     };
-                    write_fragment(f, init)?;
-                    write_fragment(f, condition)?;
-                    write_fragment(f, update)?;
+                    write_fragment(f, init.as_ref().map(|x| x as _))?;
+                    write_fragment(f, condition.as_ref().map(|x| x as _))?;
+                    write_fragment(f, update.as_ref().map(|x| x as _))?;
                     write!(f, "\n{pad}{body:#ni$?})")
                 } else {
                     write!(f, "(for {init:?} {condition:?} {update:?} {body:?})")
@@ -163,6 +138,44 @@ impl Debug for Statement<'_> {
             Self::Exit(None) => write!(f, "(exit)"),
             Self::Next => write!(f, "(next)"),
             Self::NextFile => write!(f, "(nextfile)"),
+        }
+    }
+}
+
+impl Debug for SimpleStatement<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        let (alt, ni, pad) = fmt_vars(f);
+        match self {
+            Self::Expression(expr) => {
+                if alt {
+                    write!(f, "{expr:#ni$?}")
+                } else {
+                    write!(f, "{expr:?}")
+                }
+            }
+            Self::Command {
+                name,
+                args,
+                redirection,
+            } => {
+                if let Some(rx) = redirection {
+                    if alt {
+                        write!(
+                            f,
+                            "(redir {rx:?}\n{pad}({name:?}{:#ni$?}))",
+                            ListLispFmt(args),
+                        )
+                    } else {
+                        write!(f, "(redir {rx:?} ({name:?}{:?}))", ListLispFmt(args))
+                    }
+                } else {
+                    write!(f, "({name:?}{:?})", ListLispFmt(args))
+                }
+            }
+            Self::Delete(array, Some(index)) => {
+                write!(f, "(delete (index {array:?} {index:?}))")
+            }
+            Self::Delete(array, None) => write!(f, "(delete {array:?})"),
         }
     }
 }

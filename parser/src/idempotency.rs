@@ -4,8 +4,8 @@ use crate::{
     Ast, Function,
     ast::{
         Atom, BinaryOperator, BinaryPlaceOperator, BindingPower, Body, Command, Expr, ExprNode,
-        Getline, Place, Rule, RulePattern, Statement, Ternary, UnaryOperator, UnaryPlaceOperator,
-        Variable,
+        Getline, Place, Rule, RulePattern, SimpleStatement, Statement, Ternary, UnaryOperator,
+        UnaryPlaceOperator, Variable,
     },
 };
 
@@ -77,19 +77,7 @@ impl Display for Statement<'_> {
         let ew = encode(indent, 0);
 
         match self {
-            Self::Expression(expr) => write!(f, "{expr:ew$}"),
-            Self::Command {
-                name,
-                args,
-                redirection,
-            } => {
-                write!(f, "{name} ")?;
-                write_args(f, args, indent)?;
-                if let Some(_redir) = redirection {
-                    write!(f, "TODO")?;
-                }
-                Ok(())
-            }
+            Self::Simple(simple) => <_ as Display>::fmt(simple, f),
             Self::If {
                 condition,
                 then_body,
@@ -182,6 +170,31 @@ impl Display for Statement<'_> {
             Self::Exit(None) => write!(f, "exit"),
             Self::Next => write!(f, "next"),
             Self::NextFile => write!(f, "nextfile"),
+        }
+    }
+}
+
+impl Display for SimpleStatement<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        let (indent, _) = decode(f);
+        let ew = encode(indent, 0);
+
+        match self {
+            SimpleStatement::Expression(expr) => write!(f, "{expr:ew$}"),
+            SimpleStatement::Command {
+                name,
+                args,
+                redirection,
+            } => {
+                write!(f, "{name} ")?;
+                write_args(f, args, indent)?;
+                if let Some(_redir) = redirection {
+                    write!(f, "TODO")?;
+                }
+                Ok(())
+            }
+            SimpleStatement::Delete(array, Some(index)) => write!(f, "delete {array}[{index}]"),
+            SimpleStatement::Delete(array, None) => write!(f, "delete {array}"),
         }
     }
 }
