@@ -15,7 +15,7 @@ mod tests;
 
 use std::{fmt::Debug, mem::replace};
 
-use bumpalo::{Bump, collections::Vec, vec};
+use bumpalo::{Bump, boxed::Box, collections::Vec, vec};
 use either::Either::{Left, Right};
 use hashbrown::HashMap;
 use lexer::{LexingError, Span, Token};
@@ -24,8 +24,8 @@ pub use crate::ast::Ast;
 pub use crate::lex::Lexer;
 use crate::{
     ast::{
-        Atom, Body, Command, Expr, ExprNode, Function, Identifier, Pattern, PlaceOperator, Rule,
-        RulePattern, SpecialPattern, Statement, Variable,
+        Atom, BinaryPlaceOperator, Body, Command, Expr, ExprNode, Function, Identifier, Pattern,
+        Rule, RulePattern, SpecialPattern, Statement, Variable,
     },
     diagnostics::{ParsingError, report_error},
     lex::TokenExt,
@@ -50,7 +50,7 @@ impl From<LexingError> for ParsingError {
 }
 
 type AriadneErr<'a> = (
-    Box<ariadne::Report<'a, (&'a str, Span)>>,
+    std::boxed::Box<ariadne::Report<'a, (&'a str, Span)>>,
     ariadne::Source<&'a str>,
 );
 
@@ -242,7 +242,7 @@ impl<'a> Parser<'a> {
                     let init = (!lex.consume(&Token::Semicolon))
                         .then(|| self.parse_expression(lex))
                         .transpose()?;
-                    if lex.consume(&Token::Semicolon) || init.is_none() {
+                    if init.is_none() || lex.consume(&Token::Semicolon) {
                         let condition = self.parse_for_fragment::<false>(lex)?;
                         let update = self.parse_for_fragment::<true>(lex)?;
                         let body = self.parse_statement_body(lex)?;
@@ -253,11 +253,14 @@ impl<'a> Parser<'a> {
                             body,
                         }
                     } else {
-                        let Some(Expr::Node(ExprNode::PlaceOperation(
-                            PlaceOperator::InArray,
-                            place,
+                        let Some(Expr::Node(node)) = init else {
+                            return Err(ParsingError::InvalidForLoop(lex.span()));
+                        };
+                        let ExprNode::BinaryPlaceOperation(
+                            BinaryPlaceOperator::InArray,
+                            ast::Place::Variable(variable),
                             Expr::Leaf(Atom::Variable(array)),
-                        ))) = init
+                        ) = Box::into_inner(node)
                         else {
                             return Err(ParsingError::InvalidForLoop(lex.span()));
                         };
@@ -267,8 +270,8 @@ impl<'a> Parser<'a> {
                         )?;
                         let body = self.parse_statement_body(lex)?;
                         Statement::ForEach {
-                            place: *place,
-                            array: *array,
+                            variable,
+                            array,
                             body,
                         }
                     }

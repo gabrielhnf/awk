@@ -150,3 +150,9 @@ pub fn report_error<'a>(
     }
     (Box::new(report.finish()), Source::from(source))
 }
+
+impl<T> From<(T, Self)> for ParsingError {
+    fn from(value: (T, Self)) -> Self {
+        value.1
+    }
+}

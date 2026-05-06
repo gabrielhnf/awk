@@ -5,14 +5,14 @@
 
 use std::fmt::Debug;
 
-use bumpalo::{Bump, collections::Vec};
+use bumpalo::{Bump, boxed::Box, collections::Vec};
 use either::Either;
 use hashbrown::{DefaultHashBuilder, HashMap};
 use lexer::{Slice, Span, Token};
 
 use crate::{ParsingError, Result, lex::TokenExt};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Ast<'a> {
     pub loads: Vec<'a, Slice<'a>>,
     pub begin: Vec<'a, Body<'a>>,
@@ -24,7 +24,7 @@ pub struct Ast<'a> {
     pub functions: HashMap<Identifier<'a>, Function<'a>, DefaultHashBuilder, &'a Bump>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Rule<'a> {
     pub pattern: Option<RulePattern<'a>>,
     pub actions: Option<Body<'a>>,
@@ -40,7 +40,7 @@ pub enum Atom<'a> {
     Regex(Slice<'a>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum RulePattern<'a> {
     Expression(Expr<'a>),
     Range(Expr<'a>, Expr<'a>),
@@ -81,22 +81,21 @@ pub enum Variable<'a> {
     Environ,
 }
 
-#[derive(Clone)]
 pub enum Expr<'a> {
     Leaf(Atom<'a>),
-    Node(&'a ExprNode<'a>),
+    Node(Box<'a, ExprNode<'a>>),
 }
 
-#[derive(Clone)]
 pub struct Body<'a>(pub Vec<'a, Statement<'a>>);
 pub type Pattern<'a> = Either<RulePattern<'a>, SpecialPattern>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ExprNode<'a> {
     FunctionCall(Identifier<'a>, Vec<'a, Expr<'a>>),
     UnaryOperation(UnaryOperator, Expr<'a>),
     BinaryOperation(BinaryOperator, Expr<'a>, Expr<'a>),
-    PlaceOperation(PlaceOperator, Variable<'a>, Expr<'a>),
+    UnaryPlaceOperation(UnaryPlaceOperator, Place<'a>),
+    BinaryPlaceOperation(BinaryPlaceOperator, Place<'a>, Expr<'a>),
     Ternary(Expr<'a>, Expr<'a>, Expr<'a>),
     Getline(Getline<'a>),
 }
@@ -131,10 +130,30 @@ pub enum BinaryOperator {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum PlaceOperator {
+pub enum UnaryPlaceOperator {
+    IncrementL,
+    DecrementL,
+    IncrementR,
+    DecrementR,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum BinaryPlaceOperator {
     Assignment,
+    AddAssign,
+    SubAssign,
+    MulAssign,
+    DivAssign,
+    PowAssign,
+    ModAssign,
     ArrayAccess,
     InArray,
+}
+
+pub enum Place<'a> {
+    Record(Expr<'a>),
+    Variable(Variable<'a>),
+    ArrayElement(Variable<'a>, Expr<'a>),
 }
 
 /// GNU docs: https://www.gnu.org/software/gawk/manual/html_node/Redirection.html
@@ -152,19 +171,18 @@ pub enum WriteKind {
     Coprocess,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Getline<'a> {
     // getline (var)?
-    FromInput(Option<Variable<'a>>),
+    FromInput(Option<Place<'a>>),
     // getline (var)? < (file)
-    FromFile(Option<Variable<'a>>, Expr<'a>),
+    FromFile(Option<Place<'a>>, Expr<'a>),
     // (expr) | getline (var)?
-    PipeOut(Option<Variable<'a>>, Expr<'a>),
+    PipeOut(Option<Place<'a>>, Expr<'a>),
     // (expr) |& getline (var)?
-    CoprocessOut(Option<Variable<'a>>, Expr<'a>),
+    CoprocessOut(Option<Place<'a>>, Expr<'a>),
 }
 
-#[derive(Clone)]
 pub enum Statement<'a> {
     Expression(Expr<'a>),
     Command {
@@ -194,7 +212,7 @@ pub enum Statement<'a> {
         body: Body<'a>,
     },
     ForEach {
-        place: Variable<'a>,
+        variable: Variable<'a>,
         array: Variable<'a>,
         body: Body<'a>,
     },
@@ -211,13 +229,13 @@ pub enum Statement<'a> {
     Exit(Option<Expr<'a>>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Function<'a> {
     pub args: Vec<'a, Identifier<'a>>,
     pub body: Body<'a>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Command {
     Print,
     Printf,
@@ -229,7 +247,7 @@ impl<'a> Expr<'a> {
     }
 
     pub fn node(op: impl Into<ExprNode<'a>>, arena: &'a Bump) -> Self {
-        Self::Node(arena.alloc(op.into()))
+        Self::Node(Box::new_in(op.into(), arena))
     }
 }
 
@@ -245,9 +263,15 @@ impl BinaryOperator {
     }
 }
 
-impl PlaceOperator {
-    pub fn expr<'a>(self, a: Variable<'a>, b: Expr<'a>) -> ExprNode<'a> {
-        ExprNode::PlaceOperation(self, a, b)
+impl UnaryPlaceOperator {
+    pub fn expr(self, a: Place<'_>) -> ExprNode<'_> {
+        ExprNode::UnaryPlaceOperation(self, a)
+    }
+}
+
+impl BinaryPlaceOperator {
+    pub fn expr<'a>(self, a: Place<'a>, b: Expr<'a>) -> ExprNode<'a> {
+        ExprNode::BinaryPlaceOperation(self, a, b)
     }
 }
 
@@ -270,6 +294,12 @@ impl<'a> From<Identifier<'a>> for Variable<'a> {
 }
 
 impl<'a> From<Variable<'a>> for Atom<'a> {
+    fn from(value: Variable<'a>) -> Self {
+        Self::Variable(value)
+    }
+}
+
+impl<'a> From<Variable<'a>> for Place<'a> {
     fn from(value: Variable<'a>) -> Self {
         Self::Variable(value)
     }
@@ -323,22 +353,68 @@ impl<'a> BinaryOperator {
     }
 }
 
-impl<'a> PlaceOperator {
+impl UnaryPlaceOperator {
+    pub fn parse_prefix(value: &Token<'_>, span: &Span) -> Result<Self> {
+        match value {
+            Token::Increment => Ok(Self::IncrementL),
+            Token::Decrement => Ok(Self::DecrementL),
+            _ => Err(ParsingError::OperatorExpectsVariable(span.clone())),
+        }
+    }
+
+    pub fn parse_suffix(value: &Token<'_>, span: &Span) -> Result<Self> {
+        match value {
+            Token::Increment => Ok(Self::IncrementR),
+            Token::Decrement => Ok(Self::DecrementR),
+            _ => Err(ParsingError::OperatorExpectsVariable(span.clone())),
+        }
+    }
+}
+
+impl<'a> BinaryPlaceOperator {
     pub fn parse(value: &Token<'a>, span: &Span) -> Result<Self> {
         match value {
-            Token::Assignment
-            | Token::PlusAssign
-            | Token::MinusAssign
-            | Token::StarAssign
-            | Token::SlashAssign
-            | Token::CaretAssign
-            | Token::PercentAssign => Ok(Self::Assignment),
+            Token::Assignment => Ok(Self::Assignment),
+            Token::PlusAssign => Ok(Self::AddAssign),
+            Token::MinusAssign => Ok(Self::SubAssign),
+            Token::StarAssign => Ok(Self::MulAssign),
+            Token::SlashAssign => Ok(Self::DivAssign),
+            Token::CaretAssign => Ok(Self::PowAssign),
+            Token::PercentAssign => Ok(Self::ModAssign),
             Token::OpenBracket => Ok(Self::ArrayAccess),
             Token::In => Ok(Self::InArray),
             _ => Err(ParsingError::UnexpectedToken(
                 span.clone(),
                 "expected a place operator.".into(),
             )),
+        }
+    }
+}
+
+impl<'a> Place<'a> {
+    pub fn promote_from(expr: Expr<'a>, span: Span) -> Result<Self, (Expr<'a>, ParsingError)> {
+        match expr {
+            Expr::Leaf(Atom::Variable(var)) => Ok(Self::Variable(var)),
+            Expr::Node(node)
+                if matches!(
+                    &*node,
+                    &ExprNode::UnaryOperation(UnaryOperator::Record, _)
+                        | &ExprNode::BinaryPlaceOperation(
+                            BinaryPlaceOperator::ArrayAccess,
+                            Place::Variable(_),
+                            _
+                        )
+                ) =>
+            {
+                match Box::into_inner(node) {
+                    ExprNode::UnaryOperation(_, index) => Ok(Self::Record(index)),
+                    ExprNode::BinaryPlaceOperation(_, Place::Variable(var), index) => {
+                        Ok(Self::ArrayElement(var, index))
+                    }
+                    _ => unreachable!("Box is magic; handled awkwardly in the match guard."),
+                }
+            }
+            _ => Err((expr, ParsingError::OperatorExpectsVariable(span))),
         }
     }
 }
@@ -352,39 +428,10 @@ impl WriteKind {
         }
     }
 
-    pub fn expr_getline<'a>(self, var: Option<Variable<'a>>, expr: Expr<'a>) -> Getline<'a> {
+    pub fn expr_getline<'a>(self, var: Option<Place<'a>>, expr: Expr<'a>) -> Getline<'a> {
         match self {
             Self::Pipe => Getline::PipeOut(var, expr),
             Self::Coprocess => Getline::CoprocessOut(var, expr),
-        }
-    }
-}
-
-impl BinaryOperator {
-    pub fn unfold(token: &Token) -> Option<Self> {
-        match token {
-            Token::PlusAssign => Some(Self::Add),
-            Token::MinusAssign => Some(Self::Subtract),
-            Token::StarAssign => Some(Self::Multiply),
-            Token::SlashAssign => Some(Self::Divide),
-            Token::PercentAssign => Some(Self::Modulo),
-            Token::CaretAssign => Some(Self::Raise),
-            _ => None,
-        }
-    }
-
-    pub fn unfold_prefix(token: &Token<'_>) -> Option<(Self, u8)> {
-        match token {
-            Token::Increment => Some((Self::Add, binding_powers::BP_INC_DEC)),
-            Token::Decrement => Some((Self::Subtract, binding_powers::BP_INC_DEC)),
-            _ => None,
-        }
-    }
-    pub fn unfold_suffix(token: &Token<'_>) -> Option<(Self, Self, u8)> {
-        match token {
-            Token::Increment => Some((Self::Add, Self::Subtract, binding_powers::BP_INC_DEC)),
-            Token::Decrement => Some((Self::Subtract, Self::Add, binding_powers::BP_INC_DEC)),
-            _ => None,
         }
     }
 }
@@ -435,13 +482,20 @@ impl BindingPower for BinaryOperator {
     }
 }
 
-impl BindingPower for PlaceOperator {
+impl BindingPower for UnaryPlaceOperator {
+    type Bp = u8;
+    fn binding_power(&self) -> Self::Bp {
+        binding_powers::BP_INC_DEC
+    }
+}
+
+impl BindingPower for BinaryPlaceOperator {
     type Bp = (u8, u8);
     fn binding_power(&self) -> Self::Bp {
         match self {
-            Self::Assignment => binding_powers::BP_ASSIGN,
             Self::ArrayAccess => (binding_powers::BP_GROUPING, 0),
             Self::InArray => binding_powers::BP_IN,
+            _ => binding_powers::BP_ASSIGN,
         }
     }
 }
@@ -460,7 +514,6 @@ impl BindingPower for UnaryOperator {
 
 impl BindingPower for Ternary {
     type Bp = (u8, u8);
-
     fn binding_power(&self) -> Self::Bp {
         binding_powers::BP_TERNARY
     }
@@ -476,7 +529,7 @@ impl Debug for Expr<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Leaf(atom) => write!(f, "{atom:?}"),
-            Self::Node(expr) => match expr {
+            Self::Node(expr) => match expr.as_ref() {
                 ExprNode::FunctionCall(ident, args) => {
                     write!(f, "({ident:?}")?;
                     for arg in args {
@@ -486,7 +539,8 @@ impl Debug for Expr<'_> {
                 }
                 ExprNode::UnaryOperation(op, a) => write!(f, "({op:?} {a:?})"),
                 ExprNode::BinaryOperation(op, a, b) => write!(f, "({op:?} {a:?} {b:?})"),
-                ExprNode::PlaceOperation(op, a, b) => write!(f, "({op:?} {a:?} {b:?})"),
+                ExprNode::BinaryPlaceOperation(op, a, b) => write!(f, "({op:?} {a:?} {b:?})"),
+                ExprNode::UnaryPlaceOperation(op, a) => write!(f, "({op:?} {a:?})"),
                 ExprNode::Ternary(a, b, c) => write!(f, "(?: {a:?} {b:?} {c:?})"),
                 ExprNode::Getline(getline) => match getline {
                     Getline::FromInput(Some(a)) => write!(f, "(getline {a:?})"),

@@ -5,7 +5,7 @@
 
 use std::fmt::{Debug, Display, Formatter, Result};
 
-use crate::ast::{Atom, Body, Expr, Identifier, Statement, Variable};
+use crate::ast::{Atom, Body, Expr, Identifier, Place, Statement, Variable};
 
 const PRETTY_PRINT_INDENT: usize = 2;
 
@@ -111,11 +111,15 @@ impl Debug for Statement<'_> {
                     write!(f, "(for {init:?} {condition:?} {update:?} {body:?})")
                 }
             }
-            Self::ForEach { place, array, body } => {
+            Self::ForEach {
+                variable,
+                array,
+                body,
+            } => {
                 if alt {
-                    write!(f, "(for-each {place:?} {array:?}\n{pad}{body:#ni$?})")
+                    write!(f, "(for-each {variable:?} {array:?}\n{pad}{body:#ni$?})")
                 } else {
-                    write!(f, "(for-each {place:?} {array:?} {body:?})")
+                    write!(f, "(for-each {variable:?} {array:?} {body:?})")
                 }
             }
             Self::Switch {
@@ -233,6 +237,16 @@ impl Debug for Atom<'_> {
             Self::Number(num) => write!(f, "{num}"),
             Self::Regex(rgx) => write!(f, "/{rgx}/"),
             Self::BigInt() | Self::BigFloat() => unimplemented!(),
+        }
+    }
+}
+
+impl Debug for Place<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        match self {
+            Self::Record(expr) => write!(f, "($ {expr:?})"),
+            Self::Variable(var) => <_ as Debug>::fmt(var, f),
+            Self::ArrayElement(var, index) => write!(f, "(index {var:?} {index:?})"),
         }
     }
 }

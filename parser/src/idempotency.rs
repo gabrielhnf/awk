@@ -3,8 +3,9 @@ use std::fmt::{Debug, Display, Formatter, Result, Write};
 use crate::{
     Ast, Function,
     ast::{
-        Atom, BinaryOperator, BindingPower, Body, Command, Expr, ExprNode, Getline, PlaceOperator,
-        Rule, RulePattern, Statement, Ternary, UnaryOperator,
+        Atom, BinaryOperator, BinaryPlaceOperator, BindingPower, Body, Command, Expr, ExprNode,
+        Getline, Place, Rule, RulePattern, Statement, Ternary, UnaryOperator, UnaryPlaceOperator,
+        Variable,
     },
 };
 
@@ -138,8 +139,12 @@ impl Display for Statement<'_> {
                 write!(f, ") ")?;
                 write_body(f, body, indent)
             }
-            Self::ForEach { place, array, body } => {
-                write!(f, "for ({place:?} in {array:?}) ")?;
+            Self::ForEach {
+                variable,
+                array,
+                body,
+            } => {
+                write!(f, "for ({variable} in {array}) ")?;
                 write_body(f, body, indent)
             }
             Self::Switch {
@@ -220,6 +225,23 @@ impl Display for Atom<'_> {
     }
 }
 
+impl Display for Variable<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        <Self as Debug>::fmt(self, f)
+    }
+}
+
+impl Display for Place<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        match self {
+            Self::Variable(var) => <_ as Display>::fmt(var, f),
+            Self::Record(Expr::Leaf(leaf)) => write!(f, "${leaf}"),
+            Self::Record(Expr::Node(node)) => write!(f, "$({node})"),
+            Self::ArrayElement(var, expr) => write!(f, "{var}[{expr}]"),
+        }
+    }
+}
+
 impl Display for ExprNode<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         let (indent, parent_bp) = decode(f);
@@ -249,21 +271,27 @@ impl Display for ExprNode<'_> {
                     write!(f, "{a:left_w$}{op}{b:right_w$}")
                 }
             }
-            Self::PlaceOperation(op, place, idx) => {
+            Self::UnaryPlaceOperation(op, place) => match op {
+                UnaryPlaceOperator::IncrementL => write!(f, "++{place}"),
+                UnaryPlaceOperator::DecrementL => write!(f, "--{place}"),
+                UnaryPlaceOperator::DecrementR => write!(f, "{place}--"),
+                UnaryPlaceOperator::IncrementR => write!(f, "{place}++"),
+            },
+            Self::BinaryPlaceOperation(op, place, idx) => {
                 let (left_bp, right_bp) = op.binding_power();
-                if op == &PlaceOperator::ArrayAccess {
+                if op == &BinaryPlaceOperator::ArrayAccess {
                     let idx_w = encode(indent, 0);
                     if left_bp < parent_bp {
-                        write!(f, "({place:?}[{idx:idx_w$}])")
+                        write!(f, "({place}[{idx:idx_w$}])")
                     } else {
-                        write!(f, "{place:?}[{idx:idx_w$}]")
+                        write!(f, "{place}[{idx:idx_w$}]")
                     }
                 } else {
                     let right_w = encode(indent, right_bp);
                     if left_bp < parent_bp {
-                        write!(f, "({place:?}{op}{idx:right_w$})")
+                        write!(f, "({place}{op}{idx:right_w$})")
                     } else {
-                        write!(f, "{place:?}{op}{idx:right_w$}")
+                        write!(f, "{place}{op}{idx:right_w$}")
                     }
                 }
             }
@@ -283,11 +311,14 @@ impl Display for ExprNode<'_> {
                 }
             }
             Self::Getline(getline) => match getline {
-                Getline::FromInput(Some(var)) => write!(f, "getline {var:?}"),
+                Getline::FromInput(Some(var)) => write!(f, "getline {var}"),
                 Getline::FromInput(None) => write!(f, "getline"),
-                Getline::FromFile(Some(var), file) => write!(f, "getline {var:?} < {file}"),
+                Getline::FromFile(Some(var), file) => write!(f, "getline {var} < {file}"),
                 Getline::FromFile(None, file) => write!(f, "getline < {file}"),
-                _ => todo!(),
+                Getline::PipeOut(Some(place), e) => write!(f, "{e} | getline {place}"),
+                Getline::PipeOut(None, e) => write!(f, "{e} | getline"),
+                Getline::CoprocessOut(Some(place), e) => write!(f, "{e} |& getline {place}"),
+                Getline::CoprocessOut(None, e) => write!(f, "{e} |& getline"),
             },
         }
     }
@@ -328,10 +359,16 @@ impl Display for BinaryOperator {
     }
 }
 
-impl Display for PlaceOperator {
+impl Display for BinaryPlaceOperator {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
             Self::Assignment => write!(f, " = "),
+            Self::AddAssign => write!(f, " += "),
+            Self::SubAssign => write!(f, " -= "),
+            Self::MulAssign => write!(f, " *= "),
+            Self::DivAssign => write!(f, " /= "),
+            Self::PowAssign => write!(f, " ^= "),
+            Self::ModAssign => write!(f, " %= "),
             Self::InArray => write!(f, " in "),
             Self::ArrayAccess => unreachable!("Array access needs special handling."),
         }

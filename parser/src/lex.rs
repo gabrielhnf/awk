@@ -189,7 +189,8 @@ impl TokenExt for Token<'_> {
         )
     }
     fn is_atom(&self) -> bool {
-        matches!(self, Token::Number(_) | Token::String(_) | Token::Regex(_)) || self.is_place()
+        matches!(self, Token::Number(_) | Token::String(_) | Token::Regex(_))
+            || self.is_place() && self != &Token::Record
     }
     fn is_expr_start(&self) -> bool {
         self.is_atom()
@@ -216,6 +217,7 @@ impl TokenExt for Token<'_> {
                 | Token::RlengthVariable
                 | Token::EnvironVariable
                 | Token::Identifier(_)
+                | Token::Record
         )
     }
     fn is_pattern_start(&self) -> bool {

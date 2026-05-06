@@ -3,8 +3,8 @@ use lexer::Token;
 use crate::{
     IdentifierExt, Lexer, Parser, Result,
     ast::{
-        Atom, BinaryOperator, BindingPower, Expr, ExprNode, Getline, PlaceOperator, Ternary,
-        UnaryOperator, Variable, WriteKind,
+        BinaryOperator, BinaryPlaceOperator, BindingPower, Expr, ExprNode, Getline, Place, Ternary,
+        UnaryOperator, UnaryPlaceOperator, Variable, WriteKind,
     },
     diagnostics::ParsingError,
     lex::TokenExt,
@@ -39,35 +39,35 @@ impl<'a, 'b> Pratt<'a, 'b> {
     fn fold_rhs(&mut self, lex: &mut Lexer<'a>, mut lhs: Expr<'a>, min_bp: u8) -> Result<Expr<'a>> {
         while let Some((next, span)) = lex.peek_with_span() {
             let next = next?;
-            lhs = if let Ok(op) = BinaryOperator::parse(next, &span)
+            lhs = if let Ok(op) = UnaryPlaceOperator::parse_suffix(next, &span) {
+                if op.binding_power() < min_bp {
+                    break;
+                }
+                lex.next();
+                let place = Place::promote_from(lhs.take(), lex.span())?;
+                Expr::node(op.expr(place), self.parser.arena)
+            } else if let Ok(op) = BinaryPlaceOperator::parse(next, &span) {
+                if op.binding_power().0 < min_bp {
+                    break;
+                }
+                let place = Place::promote_from(lhs.take(), lex.span())?;
+                self.parse_place_op(lex, op, place)?
+            } else if let Ok(op) = BinaryOperator::parse(next, &span)
                 && !matches!(next, Token::Increment | Token::Decrement)
             {
                 if op.binding_power().0 < min_bp {
                     break;
                 }
                 self.parse_infix_op(lex, op, lhs)?
-            } else if let Ok(op) = PlaceOperator::parse(next, &span) {
-                let Expr::Leaf(Atom::Variable(var)) = lhs.take() else {
-                    return Err(ParsingError::OperatorExpectsVariable(lex.span()));
-                };
-                if op.binding_power().0 < min_bp {
-                    break;
-                }
-                self.parse_place_op(lex, op, var)?
             } else if next == &Token::QuestionMark {
                 if Ternary.binding_power().0 < min_bp {
                     break;
                 }
                 self.parse_ternary(lex, lhs)?
-            } else if let Some((op, reciprocal, bp)) = BinaryOperator::unfold_suffix(next) {
-                let Expr::Leaf(Atom::Variable(rhs)) = lhs else {
-                    return Err(ParsingError::OperatorExpectsVariable(lex.span()));
-                };
-                if bp < min_bp {
+            } else if let Some(op) = WriteKind::parse(next) {
+                if BinaryOperator::Concat.binding_power().0 < min_bp {
                     break;
                 }
-                self.unfolded_suffix_op(lex, op, reciprocal, rhs)
-            } else if let Some(op) = WriteKind::parse(next) {
                 self.parse_getline_pipe(lex, op, lhs)?
             } else {
                 break;
@@ -87,15 +87,10 @@ impl<'a, 'b> Pratt<'a, 'b> {
 
     fn parse_prefix(&mut self, lex: &mut Lexer<'a>) -> Result<Expr<'a>> {
         let next = lex.expect_next()?;
-        if let Some((op, bp)) = BinaryOperator::unfold_prefix(&next) {
-            let Expr::Leaf(Atom::Variable(rhs)) = self.parse_expression(lex, bp)? else {
-                return Err(ParsingError::OperatorExpectsVariable(lex.span()));
-            };
+        if let Ok(op) = UnaryPlaceOperator::parse_prefix(&next, &lex.span()) {
+            let rhs = self.parse_expression(lex, op.binding_power())?;
             Ok(Expr::node(
-                PlaceOperator::Assignment.expr(
-                    rhs,
-                    Expr::node(op.expr(Expr::leaf(rhs), Expr::leaf(1.)), self.parser.arena),
-                ),
+                op.expr(Place::promote_from(rhs, lex.span())?),
                 self.parser.arena,
             ))
         } else if let Ok(op) = UnaryOperator::parse(&next, &lex.peeked_span()?) {
@@ -107,22 +102,32 @@ impl<'a, 'b> Pratt<'a, 'b> {
     }
 
     fn parse_prefix_getline(&mut self, lex: &mut Lexer<'a>) -> Result<Expr<'a>> {
-        // Consumes with maximum precedence the following ident and/or
+        // Consumes with maximum precedence the following place and/or
         // redirection reading from file.
-        // TODO: move to specialized rhs loop to disambiguate call/variable.
-        let var = if lex.peek_with(Token::is_place) {
-            let next = lex.expect_next()?;
-            self.parser.get_place(lex, next)
-        } else {
-            None
-        };
-        if lex.consume(&Token::LesserThan) {
-            Ok(Expr::node(
-                Getline::FromFile(var, self.parse_expression(lex, 0)?),
-                self.parser.arena,
+        let place = if lex.peek_with(Token::is_place) {
+            Some(Place::promote_from(
+                self.parse_expression(lex, BinaryOperator::Concat.binding_power().1)?,
+                lex.span(),
             ))
         } else {
-            Ok(Expr::node(Getline::FromInput(var), self.parser.arena))
+            None
+        }
+        .transpose();
+
+        let getline = |gl| Expr::node(ExprNode::Getline(gl), self.parser.arena);
+        match place {
+            Err((expr, _)) => Ok(Expr::node(
+                BinaryOperator::Concat.expr(getline(Getline::FromInput(None)), expr),
+                self.parser.arena,
+            )),
+            Ok(place) => {
+                if lex.consume(&Token::LesserThan) {
+                    let file = self.parse_expression(lex, BinaryOperator::Lt.binding_power().1)?;
+                    Ok(getline(Getline::FromFile(place, file)))
+                } else {
+                    Ok(getline(Getline::FromInput(place)))
+                }
+            }
         }
     }
 
@@ -154,15 +159,15 @@ impl<'a, 'b> Pratt<'a, 'b> {
     fn parse_place_op(
         &mut self,
         lex: &mut Lexer<'a>,
-        op: PlaceOperator,
-        var: Variable<'a>,
+        op: BinaryPlaceOperator,
+        place: Place<'a>,
     ) -> Result<Expr<'a>> {
-        let token_op = lex.expect_next()?;
-
+        lex.next();
         let mut rhs = self.parse_expression(lex, op.binding_power().1)?;
-        if let Some(op) = BinaryOperator::unfold(&token_op) {
-            rhs = Expr::node(op.expr(Expr::leaf(var), rhs), self.parser.arena);
-        } else if op == PlaceOperator::ArrayAccess {
+        if op == BinaryPlaceOperator::ArrayAccess {
+            if !matches!(place, Place::Variable(_)) {
+                return Err(ParsingError::OperatorExpectsVariable(lex.span()));
+            }
             while lex.consume(&Token::Comma) {
                 rhs = Expr::node(
                     BinaryOperator::Concat.expr(
@@ -178,7 +183,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
             }
             lex.expect(&Token::ClosedBracket, ParsingError::UnclosedArrayAccess)?;
         }
-        Ok(Expr::node(op.expr(var, rhs), self.parser.arena))
+        Ok(Expr::node(op.expr(place, rhs), self.parser.arena))
     }
 
     fn parse_ternary(&mut self, lex: &mut Lexer<'a>, lhs: Expr<'a>) -> Result<Expr<'a>> {
@@ -193,42 +198,32 @@ impl<'a, 'b> Pratt<'a, 'b> {
         ))
     }
 
-    fn unfolded_suffix_op(
-        &mut self,
-        lex: &mut Lexer<'a>,
-        op: BinaryOperator,
-        reciprocal: BinaryOperator,
-        rhs: Variable<'a>,
-    ) -> Expr<'a> {
-        lex.next();
-        Expr::node(
-            reciprocal.expr(
-                Expr::node(
-                    PlaceOperator::Assignment.expr(
-                        rhs,
-                        Expr::node(op.expr(Expr::leaf(rhs), Expr::leaf(1.)), self.parser.arena),
-                    ),
-                    self.parser.arena,
-                ),
-                Expr::leaf(1.),
-            ),
-            self.parser.arena,
-        )
-    }
-
     fn parse_getline_pipe(
         &mut self,
         lex: &mut Lexer<'a>,
         op: WriteKind,
         lhs: Expr<'a>,
     ) -> Result<Expr<'a>> {
+        lex.next();
         lex.expect(&Token::Getline, |span| {
             ParsingError::UnexpectedToken(
                 span,
                 "operand must precede `getline` in an expression.".into(),
             )
         })?;
-        // TODO: move to specialized rhs loop to disambiguate call/variable.
-        Ok(Expr::node(op.expr_getline(None, lhs), self.parser.arena))
+
+        let pipe = |place| Expr::node(op.expr_getline(place, lhs), self.parser.arena);
+        if lex.peek_with(Token::is_place) {
+            let expr = self.parse_expression(lex, BinaryOperator::Concat.binding_power().1)?;
+            match Place::promote_from(expr, lex.span()) {
+                Ok(place) => Ok(pipe(Some(place))),
+                Err((expr, _)) => Ok(Expr::node(
+                    BinaryOperator::Concat.expr(pipe(None), expr),
+                    self.parser.arena,
+                )),
+            }
+        } else {
+            Ok(pipe(None))
+        }
     }
 }
