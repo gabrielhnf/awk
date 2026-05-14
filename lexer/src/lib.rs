@@ -200,10 +200,10 @@ pub enum Token<'a> {
     DoublePipe,
     #[token(">>", accept_expression)]
     AppendPipe,
-    #[regex(r"\?(?&ignore)?", priority = 11)]
+    #[regex(r"\?(?&ignore)?", accept_expression, priority = 11)]
     #[regex(r"\?(?&ignore_with_nl)", parse_non_posix_operator, priority = 10)]
     QuestionMark,
-    #[regex(":(?&ignore)?", priority = 11)]
+    #[regex(":(?&ignore)?", accept_expression, priority = 11)]
     #[regex(r":(?&ignore_with_nl)", parse_non_posix_operator, priority = 10)]
     Colon,
     #[regex(r"\{(?&ignore_with_nl)", accept_expression)]
