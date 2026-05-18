@@ -271,23 +271,25 @@ impl<'a> Parser<'a> {
                     }
                 }
                 Token::For => {
-                    // FIXME(trivial): parser differential w/ GNU: they treat
-                    // for (ident in ident; expr; expr) as a syntax error.
-                    // It seems like a bug to me.
                     lex.expect(&Token::OpenParent, ParsingError::ExpectedOpeningParenthesis)?;
-                    let init = if lex.consume(&Token::Semicolon) {
-                        None
+
+                    if lex.peek_is(&Token::Semicolon) {
+                        self.parse_for_loop(lex, None)?
                     } else {
-                        let Some(stmnt) = self.parse_simple_statement(lex) else {
+                        let enclosed = lex.consume(&Token::OpenParent);
+                        let Some(stmnt) = self.parse_simple_statement(lex).transpose()? else {
                             return Err(ParsingError::InvalidForLoop(lex.span()));
                         };
-                        Some(stmnt?)
-                    };
-                    if init.is_none() || lex.consume(&Token::Semicolon) {
-                        self.parse_for_loop(lex, init)
-                    } else {
-                        self.parse_for_each(lex, init)
-                    }?
+                        if enclosed {
+                            lex.expect(
+                                &Token::ClosedParent,
+                                ParsingError::UnclosedParenthesisInStatement,
+                            )?;
+                            self.parse_for_loop(lex, Some(stmnt))?
+                        } else {
+                            self.parse_for_ambiguous(lex, Some(stmnt))?
+                        }
+                    }
                 }
                 Token::Switch => {
                     let scrutinee = self.parse_parenthesized_expr(lex)?;
@@ -409,6 +411,7 @@ impl<'a> Parser<'a> {
         lex: &mut Lexer<'a>,
         init: Option<SimpleStatement<'a>>,
     ) -> Result<Statement<'a>> {
+        lex.consume(&Token::Semicolon);
         lex.consume(&Token::Newline);
         let condition = (!lex.peek_is(&Token::Semicolon))
             .then(|| self.parse_expression(lex, false))
@@ -436,27 +439,32 @@ impl<'a> Parser<'a> {
     }
 
     #[tracing::instrument]
-    fn parse_for_each(
+    fn parse_for_ambiguous(
         &mut self,
         lex: &mut Lexer<'a>,
         expr: Option<SimpleStatement<'a>>,
     ) -> Result<Statement<'a>> {
-        let Some(SimpleStatement::Expression(Expr::Node(node))) = expr else {
-            return Err(ParsingError::InvalidForLoop(lex.span()));
+        let (array, variable) = match expr {
+            Some(SimpleStatement::Expression(Expr::Node(node)))
+                if matches!(&*node, ExprNode::ArrayOperation(ArrayOperator::In, _, _)) =>
+            {
+                if let ExprNode::ArrayOperation(ArrayOperator::In, array, mut args) =
+                    Box::into_inner(node)
+                    && let [Expr::Leaf(Atom::Variable(var))] = &mut *args
+                {
+                    (array, replace(var, Variable::Nr))
+                } else {
+                    return Err(ParsingError::InvalidForLoop(lex.span()));
+                }
+            }
+            expr => return self.parse_for_loop(lex, expr),
         };
-        let ExprNode::ArrayOperation(ArrayOperator::In, array, mut args) = Box::into_inner(node)
-        else {
-            return Err(ParsingError::InvalidForLoop(lex.span()));
-        };
-        let [Expr::Leaf(Atom::Variable(variable))] = &mut *args else {
-            return Err(ParsingError::InvalidForLoop(lex.span()));
-        };
-        let variable = replace(variable, Variable::Nr);
 
         lex.expect(
             &Token::ClosedParent,
             ParsingError::UnclosedParenthesisInStatement,
         )?;
+
         let body = self.parse_statement_body(lex)?;
         Ok(Statement::ForEach {
             variable,
