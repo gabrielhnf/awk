@@ -35,13 +35,13 @@ impl<'a, 'b> Pratt<'a, 'b> {
     }
 
     pub fn parse_command_argument(&mut self, lex: &mut Lexer<'a>) -> Result<Expr<'a>> {
-        let lhs = self.parse_lhs(lex)?;
+        let lhs = self.parse_lhs(lex, 0)?;
         self.fold_rhs(lex, lhs, 0, |t| Redirection::parse(t).is_some())
     }
 
-    fn parse_lhs(&mut self, lex: &mut Lexer<'a>) -> Result<Expr<'a>> {
+    fn parse_lhs(&mut self, lex: &mut Lexer<'a>, min_bp: u8) -> Result<Expr<'a>> {
         if lex.consume(&Token::OpenParent) {
-            self.parse_parenthesized(lex)
+            self.parse_parenthesized(lex, min_bp)
         } else if lex.peek_with(Token::is_prefix_op) {
             self.parse_prefix(lex)
         } else if lex.consume(&Token::Getline) {
@@ -53,7 +53,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
     }
 
     fn parse_expression(&mut self, lex: &mut Lexer<'a>, min_bp: u8) -> Result<Expr<'a>> {
-        let lhs = self.parse_lhs(lex)?;
+        let lhs = self.parse_lhs(lex, min_bp)?;
         self.fold_rhs(lex, lhs, min_bp, |_| false)
     }
 
@@ -157,15 +157,36 @@ impl<'a, 'b> Pratt<'a, 'b> {
         Ok(lhs)
     }
 
-    fn parse_parenthesized(&mut self, lex: &mut Lexer<'a>) -> Result<Expr<'a>> {
-        // I would consider this a gawk bug, but it's most likely a wontfix.
+    fn parse_parenthesized(&mut self, lex: &mut Lexer<'a>, min_bp: u8) -> Result<Expr<'a>> {
         self.typed_regex = false;
         let inner = self.parse(lex)?;
-        lex.expect(
-            &Token::ClosedParent,
-            ParsingError::UnclosedParenthesisExpression,
-        )?;
-        Ok(inner)
+        if min_bp < UnaryOperator::Record.binding_power() && lex.peek_is(&Token::Comma) {
+            let expr = self.parse_comma_expr(lex, inner)?;
+            lex.expect(
+                &Token::ClosedParent,
+                ParsingError::UnclosedParenthesisExpression,
+            )?;
+            lex.expect(&Token::In, |s| {
+                ParsingError::UnexpectedToken(
+                    s,
+                    "expected `in` after multidimensional array look-up.".into(),
+                )
+            })?;
+            let start = lex.span().start;
+            let Place::Variable(var) = self.parse_place(lex)? else {
+                return Err(ParsingError::OperatorExpectsVariable(start..lex.span().end));
+            };
+            Ok(Expr::node(
+                ArrayOperator::In.expr(var, expr),
+                self.parser.arena,
+            ))
+        } else {
+            lex.expect(
+                &Token::ClosedParent,
+                ParsingError::UnclosedParenthesisExpression,
+            )?;
+            Ok(inner)
+        }
     }
 
     fn parse_prefix(&mut self, lex: &mut Lexer<'a>) -> Result<Expr<'a>> {
@@ -336,7 +357,7 @@ impl<'a, 'b> Pratt<'a, 'b> {
                 Expr::Leaf(Atom::Number(0.))
             }
             tok if tok.is_place() => {
-                let expr = self.parse_lhs(lex)?;
+                let expr = self.parse_lhs(lex, 0)?;
                 if lex.consume(&Token::OpenBracket) {
                     let Expr::Leaf(Atom::Variable(var)) = expr else {
                         return Err(ParsingError::OperatorExpectsVariable(start..lex.span().end));
