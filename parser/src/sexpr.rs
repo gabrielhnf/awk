@@ -191,7 +191,11 @@ impl Debug for SimpleStatement<'_> {
             }
 
             Self::Delete(array, Some(index)) => {
-                write!(f, "(delete (index {array:?} {index:?}))")
+                write!(f, "(delete (Index {array:?}")?;
+                for i in index {
+                    write!(f, " {i}")?;
+                }
+                write!(f, "))")
             }
             Self::Delete(array, None) => write!(f, "(delete {array:?})"),
         }

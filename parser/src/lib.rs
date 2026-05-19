@@ -568,8 +568,10 @@ impl<'a> Parser<'a> {
         };
         let index = if lex.consume(&Token::OpenBracket) {
             let mut pratt = Pratt::new(self, false);
-            let first = pratt.parse(lex)?;
-            Some(pratt.parse_comma_expr(lex, first)?)
+            let expr = pratt.parse(lex)?;
+            let expr = pratt.parse_comma_expr(lex, expr)?;
+            lex.expect(&Token::ClosedBracket, ParsingError::UnclosedArrayAccess)?;
+            Some(expr)
         } else {
             None
         };
