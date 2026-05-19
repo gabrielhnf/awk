@@ -225,7 +225,7 @@ pub enum Token<'a> {
     Record,
     #[regex(r"\n+", accept_expression)]
     Newline,
-    #[regex(";+", accept_expression)]
+    #[regex(";", accept_expression)]
     Semicolon,
 }
 
