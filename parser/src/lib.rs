@@ -21,13 +21,9 @@ use either::Either::{Left, Right};
 use hashbrown::HashMap;
 use lexer::{LexingError, Span, Token};
 
-pub use crate::ast::Ast;
+pub use crate::ast::*;
 pub use crate::lex::Lexer;
 use crate::{
-    ast::{
-        ArrayOperator, Atom, Body, Command, Expr, ExprNode, Function, Identifier, Pattern,
-        Redirection, Rule, RulePattern, SimpleStatement, SpecialPattern, Statement, Variable,
-    },
     diagnostics::{ParsingError, report_error},
     lex::TokenExt,
     pratt::Pratt,

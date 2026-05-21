@@ -149,7 +149,6 @@ pub enum BinaryPlaceOperator {
     PowAssign,
     ModAssign,
 }
-
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ArrayOperator {
     Index,

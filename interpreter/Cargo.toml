@@ -10,6 +10,8 @@ either.workspace = true
 memchr.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+parser.workspace = true
+indexmap = "2.14.0"
 
 [lints]
 workspace = true

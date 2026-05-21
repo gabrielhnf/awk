@@ -502,7 +502,9 @@ version = "0.1.0"
 dependencies = [
  "color-eyre",
  "either",
+ "indexmap",
  "memchr",
+ "parser",
  "thiserror",
  "tracing",
 ]

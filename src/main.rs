@@ -14,7 +14,8 @@ use std::io::{self, Write};
 use bumpalo::Bump;
 use clap::Parser as _;
 use color_eyre::Result;
-use parser::Parser;
+use interpreter::test_interpreter;
+use parser::{Body, Parser, Rule};
 
 use crate::{
     cli::Args,
@@ -53,6 +54,20 @@ fn uu_main() -> Result<()> {
     }
     dbg!(arena.chunk_capacity());
 
+    if let Some(Rule {
+        actions: Some(Body(a)),
+        pattern: _,
+    }) = ast.rules.first()
+        && let Some(parser::Statement::Simple(parser::SimpleStatement::Expression(expr))) =
+            a.first()
+    {
+        let x = test_interpreter(expr);
+        if let Err(e) = writeln!(io::stdout(), "---\n{x}")
+            && e.kind() != io::ErrorKind::BrokenPipe
+        {
+            exit_err(Some(format!("awk: error writing to standard output: {e}")));
+        }
+    }
     // for token in lex {
     //     let Ok(x) = token else {
     //         return token.map(drop).map_err(color_eyre::Report::from);
