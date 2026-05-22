@@ -259,3 +259,120 @@ fn lexer_test_regex_ambiguity() {
         ]
     );
 }
+
+#[test]
+fn lexer_test_hex_escape() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"\"\\x41\"", &arena, false, false),
+        &[Token::String(b"A".into())]
+    );
+}
+
+#[test]
+fn lexer_test_hex_escape_uppercase() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"\"\\x4F\"", &arena, false, false),
+        &[Token::String(b"O".into())]
+    );
+}
+
+#[test]
+fn lexer_test_hex_escape_single_digit() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"\"\\x9\"", &arena, false, false),
+        &[Token::String(b"\x09".into())]
+    );
+}
+
+#[test]
+fn lexer_test_hex_escape_posix_strict() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"\"\\x41\"", &arena, true, false),
+        &[Token::String(b"x41".into())]
+    );
+}
+
+#[test]
+fn lexer_test_unicode_escape_posix_strict() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"\"\\u0041\"", &arena, true, false),
+        &[Token::String(b"u0041".into())]
+    );
+}
+
+#[test]
+fn lexer_test_unicode_escape_ascii() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"\"\\u0041\"", &arena, false, false),
+        &[Token::String(b"A".into())]
+    );
+}
+
+#[test]
+fn lexer_test_unicode_escape_two_byte() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"\"\\u00e9\"", &arena, false, false),
+        &[Token::String("\u{00e9}".as_bytes().into())]
+    );
+}
+
+#[test]
+fn lexer_test_unicode_escape_three_byte() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"\"\\u4e2d\"", &arena, false, false),
+        &[Token::String("\u{4e2d}".as_bytes().into())]
+    );
+}
+
+#[test]
+fn lexer_test_unicode_escape_uppercase() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"\"\\u004F\"", &arena, false, false),
+        &[Token::String(b"O".into())]
+    );
+}
+
+#[test]
+fn lexer_test_unicode_escape_single_digit() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"\"\\u9\"", &arena, false, false),
+        &[Token::String("\u{9}".as_bytes().into())]
+    );
+}
+
+#[test]
+fn lexer_test_hex_escape_no_digits() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"\"\\x\"", &arena, false, false),
+        &[Token::String(b"x".into())]
+    );
+}
+
+#[test]
+fn lexer_test_unicode_escape_no_digits() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"\"\\u\"", &arena, false, false),
+        &[Token::String(b"u".into())]
+    );
+}
+
+#[test]
+fn lexer_test_unicode_escape_eight_digits() {
+    let arena = Bump::new();
+    assert_eq!(
+        &lex(b"\"\\u00000032\"", &arena, false, false),
+        &[Token::String(b"2".into())]
+    );
+}
