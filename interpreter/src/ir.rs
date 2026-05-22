@@ -14,12 +14,9 @@
 
 mod lower;
 
-use std::{
-    fmt::{Debug, Display},
-    ops::Deref,
-};
-
 pub use lower::test_interpreter;
+
+use std::fmt::{Debug, Display};
 
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
@@ -85,7 +82,7 @@ const _: () = const { assert!(size_of::<Instruction>() <= 8) };
 #[repr(C, align(8))]
 struct Instruction {
     opcode: OpCode,
-    // hint: Hint,
+    hint: Hint,
     args: Arguments,
 }
 
@@ -104,30 +101,39 @@ union Arguments {
 }
 
 impl Instruction {
-    fn unary(opcode: impl Into<OpCode>, dest: Reg, src: &impl Deref<Target = Reg>) -> Self {
+    fn unary(opcode: impl Into<OpCode>, dest: Reg, src: &impl HintedReg) -> Self {
         let opcode = opcode.into();
         debug_assert!(opcode.is_unary());
         Self {
             opcode,
             args: Arguments {
-                unary_local: (dest, **src),
+                unary_local: (dest, src.reg()),
             },
+            hint: src.hint(),
         }
     }
 
     fn binary(
         opcode: impl Into<OpCode>,
         dest: Reg,
-        lhs: &impl Deref<Target = Reg>,
-        rhs: &impl Deref<Target = Reg>,
+        lhs: &impl HintedReg,
+        rhs: &impl HintedReg,
     ) -> Self {
         let opcode = opcode.into();
         debug_assert!(opcode.is_binary());
+        let hint = match (lhs.hint(), rhs.hint()) {
+            // TODO: Remove once we get const folding.
+            (Hint::UnboxedFloat64, Hint::UnboxedFloat64) => Hint::UnboxedFloat64,
+            (_, Hint::UnboxedFloat64) => Hint::UnboxedRhsFloat64,
+            (Hint::UnboxedFloat64, _) => Hint::UnboxedLhsFloat64,
+            _ => Hint::None,
+        };
         Self {
             opcode,
             args: Arguments {
-                binary_local: (dest, **lhs, **rhs),
+                binary_local: (dest, lhs.reg(), rhs.reg()),
             },
+            hint,
         }
     }
 
@@ -139,6 +145,7 @@ impl Instruction {
             args: Arguments {
                 load_store: (dest, src),
             },
+            hint: Hint::None,
         }
     }
 
@@ -148,6 +155,7 @@ impl Instruction {
         Self {
             opcode,
             args: Arguments { jump: to },
+            hint: Hint::None,
         }
     }
 
@@ -159,6 +167,7 @@ impl Instruction {
             args: Arguments {
                 branch: (cond, true_to, false_to),
             },
+            hint: Hint::None,
         }
     }
 
@@ -168,6 +177,7 @@ impl Instruction {
         Self {
             opcode,
             args: Arguments { br_if: (cond, to) },
+            hint: Hint::None,
         }
     }
 }
@@ -219,12 +229,19 @@ impl OpCode {
     }
 }
 
-// #[derive(Clone, Copy)]
-// #[repr(u8, align(1))]
-// enum Hint {
-//     // Next instruction contains additional data; for use in pipes, etc.
-//     // Also allows us to move past (2^16 - 1) variables if we want to.
-// }
+#[repr(u8, align(1))]
+#[derive(Clone, Copy, Debug)]
+enum Hint {
+    None = 0,
+    UnboxedFloat64,
+    UnboxedLhsFloat64,
+    UnboxedRhsFloat64,
+}
+
+trait HintedReg {
+    fn reg(&self) -> Reg;
+    fn hint(&self) -> Hint;
+}
 
 impl Debug for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -323,6 +340,13 @@ impl Display for Instruction {
                 write!(f, "{op} {label}")
             }
             _ => todo!(),
+        }?;
+        match self.hint {
+            Hint::UnboxedFloat64 if self.opcode.is_binary() => write!(f, " @ all_unboxedf64"),
+            Hint::UnboxedFloat64 => write!(f, " @ all_unboxedf64"),
+            Hint::UnboxedLhsFloat64 => write!(f, " @ lhs_unboxedf64"),
+            Hint::UnboxedRhsFloat64 => write!(f, " @ rhs_unboxedf64"),
+            Hint::None => Ok(()),
         }
     }
 }

@@ -6,15 +6,14 @@
 use std::fmt::Display;
 use std::hash::Hash;
 use std::mem::forget;
-use std::ops::Deref;
 
 use indexmap::IndexSet;
 use parser::{Atom, BinaryOperator, Expr, ExprNode, UnaryOperator};
 
-use crate::ir::{Instruction, Label, NonLocal, OpCode, Reg};
+use crate::ir::{Hint, HintedReg, Instruction, Label, NonLocal, OpCode, Reg};
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
-struct Value(f64); // TODO: use NaN-boxing.
+pub struct Value(f64); // TODO: use NaN-boxing.
 
 #[derive(Debug)]
 struct Code {
@@ -26,16 +25,15 @@ struct Code {
 
 #[must_use]
 #[derive(Debug)]
-#[repr(transparent)]
-struct LinearReg(Reg);
+struct LinearReg(Reg, Hint);
 
 impl Code {
     fn lower_expr(&mut self, expr: &Expr) -> LinearReg {
         let dest = self.alloc_reg();
-        self.lower_expr_into(expr, dest);
-        LinearReg(dest)
+        let hint = self.lower_expr_into(expr, dest);
+        LinearReg(dest, hint)
     }
-    fn lower_expr_into(&mut self, expr: &Expr, dest: Reg) {
+    fn lower_expr_into(&mut self, expr: &Expr, dest: Reg) -> Hint {
         match expr {
             Expr::Leaf(atom) => match atom {
                 Atom::Variable(var) => {
@@ -47,6 +45,7 @@ impl Code {
                     let src = self.register_const(Value(n));
                     self.bc
                         .emit(Instruction::load_store(OpCode::LoadConst, dest, src));
+                    return Hint::UnboxedFloat64;
                 }
                 _ => todo!(),
             },
@@ -84,6 +83,7 @@ impl Code {
                 _ => todo!(),
             },
         }
+        Hint::None
     }
 
     fn alloc_reg(&mut self) -> Reg {
@@ -141,7 +141,7 @@ impl RegsState {
             n_free_regs: code.free_regs.len(),
         }
     }
-    fn scope(self, code: &mut Code, f: impl FnOnce(&mut Code)) -> Self {
+    fn scope<T>(self, code: &mut Code, f: impl FnOnce(&mut Code) -> T) -> Self {
         f(code);
         let old = code.reg_pointer;
         code.reg_pointer = self.reg_pointer;
@@ -151,7 +151,7 @@ impl RegsState {
             n_free_regs: self.n_free_regs,
         }
     }
-    fn scope_hwm(self, code: &mut Code, f: impl FnOnce(&mut Code)) {
+    fn scope_hwm<T>(self, code: &mut Code, f: impl FnOnce(&mut Code) -> T) {
         f(code);
         code.reg_pointer = code.reg_pointer.max(self.reg_pointer);
         code.free_regs.truncate(self.n_free_regs);
@@ -166,7 +166,6 @@ pub fn test_interpreter(expr: &Expr<'_>) -> impl Display {
         free_regs: Vec::new(),
     };
     let result = c.lower_expr(expr);
-    dbg!(&c, &result);
     forget(result);
     c
 }
@@ -254,11 +253,13 @@ impl LinearReg {
     }
 }
 
-impl Deref for LinearReg {
-    type Target = Reg;
+impl HintedReg for LinearReg {
+    fn reg(&self) -> Reg {
+        self.0
+    }
 
-    fn deref(&self) -> &Self::Target {
-        &self.0
+    fn hint(&self) -> Hint {
+        self.1
     }
 }
 
