@@ -387,6 +387,11 @@ fn parse_escape<const REGEX: bool>(
 ) -> Result<usize> {
     let mut count = 2;
     let is_oct = |x: char| ('0'..'8').contains(&x);
+    let is_hex = |i: usize| {
+        slice
+            .get(i)
+            .is_some_and(|&x| (x as char).is_ascii_hexdigit())
+    };
     let is_slice_oct = |i| slice.get(i).map(|&x| x as char).is_some_and(is_oct);
     let Some(to_escape) = slice.get(1).map(|x| *x as char) else {
         return Err(LexingError::UnexpectedEof);
@@ -417,13 +422,55 @@ fn parse_escape<const REGEX: bool>(
                 .take(count - 1)
                 .fold(0, |acc, digit| acc * 8 + digit - b'0') as char
         }
-        'x' if !posix_strict => todo!(),
-        'u' => todo!(),
+        'x' if !posix_strict => {
+            let num_digits = is_hex(2) as usize + (is_hex(2) && is_hex(3)) as usize;
+
+            if num_digits == 0 {
+                'x'
+            } else {
+                count += num_digits;
+
+                let value = parse_hex_digits(&slice[2..2 + num_digits]) as u8;
+                value as char
+            }
+        }
+        'u' if !posix_strict => {
+            let num_digits = (2..=9).take_while(|&i| is_hex(i)).count();
+
+            if num_digits == 0 {
+                'u'
+            } else {
+                count += num_digits;
+
+                let codepoint = parse_hex_digits(&slice[2..2 + num_digits]);
+
+                // FIXME: assumes UTF-8 locale; replacement character and encoding may differ
+                // for non-UTF-8 locales.
+                let c = char::from_u32(codepoint).unwrap_or('\u{FFFD}');
+                let mut buf = [0u8; 4];
+                let encoded = c.encode_utf8(&mut buf);
+                out.extend_from_slice_copy(encoded.as_bytes());
+
+                return Ok(count);
+            }
+        }
         // Unspecified by POSIX; we ditto GNU.
         c => c, // TODO: Output warning
     };
     out.push(escaped as u8);
     Ok(count)
+}
+
+fn parse_hex_digits(slice: &[u8]) -> u32 {
+    slice.iter().fold(0u32, |acc, &digit| {
+        acc * 16
+            + match digit {
+                b'0'..=b'9' => (digit - b'0') as u32,
+                b'a'..=b'f' => (digit - b'a' + 10) as u32,
+                b'A'..=b'F' => (digit - b'A' + 10) as u32,
+                _ => unreachable!(),
+            }
+    })
 }
 
 fn parse_ident<'a>(lex: &mut Lexer<'a>, index: impl SliceIndex<[u8], Output = [u8]>) -> &'a str {
