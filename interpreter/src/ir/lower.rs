@@ -55,14 +55,45 @@ impl Code<'_> {
                         .emit(Instruction::branch(condition.reg(), label_then, Label(0)));
                 self.free_reg(condition);
                 self.lower_body(then_body);
-                self.bc.nth(if_label).args.branch.2 = self.following_instr(1);
+                self.bc.nth(if_label).args.branch.2 = self.following_instr(0);
 
                 if let Some(else_body) = else_body {
                     state.reg_pointer += 1;
+                    unsafe { self.bc.nth(if_label).args.branch.2.0 += 1 };
                     let end_label = self.bc.emit(Instruction::jump(Label(0)));
                     state.scope_hwm(self, |c| c.lower_body(else_body));
                     self.bc.nth(end_label).args.jump = self.following_instr(0);
                 }
+            }
+            Statement::While {
+                condition,
+                then_body,
+            } => {
+                let cond_label = self.following_instr(0);
+                let condition = self.lower_expr(condition);
+                let while_label = self.bc.emit(Instruction::branch(
+                    condition.reg(),
+                    self.following_instr(1),
+                    Label(0),
+                ));
+                self.free_reg(condition);
+                self.lower_body(then_body);
+                self.bc.emit(Instruction::jump(cond_label));
+                self.bc.nth(while_label).args.branch.2 = self.following_instr(0);
+            }
+            Statement::DoWhile {
+                then_body,
+                condition,
+            } => {
+                let do_label = self.following_instr(0);
+                self.lower_body(then_body);
+                let condition = self.lower_expr(condition);
+                self.bc.emit(Instruction::branch(
+                    condition.reg(),
+                    do_label,
+                    self.following_instr(1),
+                ));
+                self.free_reg(condition);
             }
             Statement::Simple(SimpleStatement::Expression(expr)) => {
                 let reg = self.lower_expr(expr);
