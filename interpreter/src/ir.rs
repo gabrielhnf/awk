@@ -10,9 +10,7 @@
 //! emitting bytecode without an intermediate AST because AWK contextual
 //! shenanigans; _even_ if it was possible, good luck maintaining that.
 
-#![allow(dead_code)]
-
-mod lower;
+pub mod lower;
 
 pub use lower::test_interpreter;
 
@@ -20,23 +18,23 @@ use std::fmt::{Debug, Display};
 
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
-struct NonLocal(u16);
+pub struct NonLocal(pub u16);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
-struct Reg(u16);
+pub struct Reg(pub u16);
 
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
-struct Label(u16);
+pub struct Label(u16);
 
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
-struct ArgCount(u16);
+pub struct ArgCount(u16);
 
 #[repr(u8, align(1))]
 #[derive(Clone, Copy, Debug)]
-enum OpCode {
+pub enum OpCode {
     // Unary operations
     Record,
     Negation,
@@ -63,10 +61,12 @@ enum OpCode {
     Modulo,
 
     // Intrinsic operations
-    Load,
+    LoadUser,
+    LoadBultin,
     LoadConst,
     Copy,
-    Store,
+    StoreUser,
+    StoreBuiltin,
     IntrinsicCall,
     UserCall,
     IndirectCall,
@@ -80,25 +80,35 @@ const _: () = const { assert!(size_of::<Instruction>() <= 8) };
 
 #[derive(Clone, Copy)]
 #[repr(C, align(8))]
-struct Instruction {
-    opcode: OpCode,
-    hint: Hint,
-    args: Arguments,
+pub struct Instruction {
+    pub opcode: OpCode,
+    pub hint: Hint,
+    pub args: Arguments,
 }
 
 #[derive(Clone, Copy)]
 #[repr(C, align(2))]
-union Arguments {
-    unary_local: (Reg, Reg),
-    binary_local: (Reg, Reg, Reg),
-    load_store: (Reg, NonLocal),
-    jump: Label,
-    ret: Reg,
-    branch: (Reg, Label, Label),
-    br_if: (Reg, Label),
-    call: (Reg, NonLocal, ArgCount),
-    ind_call: (Reg, Reg, ArgCount),
+pub union Arguments {
+    unary_local: UnaryArg,
+    binary_local: BinaryArg,
+    load_store: LoadStoreArg,
+    jump: JumpArg,
+    ret: RetArg,
+    branch: BranchArg,
+    br_if: BrIfArg,
+    call: CallArgs,
+    ind_call: IndCallArgs,
 }
+
+pub type UnaryArg = (Reg, Reg);
+pub type BinaryArg = (Reg, Reg, Reg);
+pub type LoadStoreArg = (Reg, NonLocal);
+pub type JumpArg = Label;
+pub type RetArg = Reg;
+pub type BranchArg = (Reg, Label, Label);
+pub type BrIfArg = (Reg, Label);
+pub type CallArgs = (Reg, NonLocal, ArgCount);
+pub type IndCallArgs = (Reg, Reg, ArgCount);
 
 impl Instruction {
     fn unary(opcode: impl Into<OpCode>, dest: Reg, src: &impl HintedReg) -> Self {
@@ -180,6 +190,24 @@ impl Instruction {
             hint: Hint::None,
         }
     }
+
+    pub fn get_unary(&self) -> Option<&UnaryArg> {
+        self.opcode
+            .is_unary()
+            .then(|| unsafe { &self.args.unary_local })
+    }
+
+    pub fn get_binary(&self) -> Option<&BinaryArg> {
+        self.opcode
+            .is_binary()
+            .then(|| unsafe { &self.args.binary_local })
+    }
+
+    pub fn get_load_store(&self) -> Option<&LoadStoreArg> {
+        self.opcode
+            .is_load_store()
+            .then(|| unsafe { &self.args.load_store })
+    }
 }
 
 impl OpCode {
@@ -213,7 +241,14 @@ impl OpCode {
     }
 
     fn is_load_store(self) -> bool {
-        matches!(self, Self::Load | Self::Store | Self::LoadConst)
+        matches!(
+            self,
+            Self::LoadUser
+                | Self::LoadBultin
+                | Self::LoadConst
+                | Self::StoreUser
+                | Self::StoreBuiltin
+        )
     }
 
     fn is_jump(self) -> bool {
@@ -231,7 +266,7 @@ impl OpCode {
 
 #[repr(u8, align(1))]
 #[derive(Clone, Copy, Debug)]
-enum Hint {
+pub enum Hint {
     None = 0,
     UnboxedFloat64,
     UnboxedLhsFloat64,
@@ -247,35 +282,15 @@ impl Debug for Instruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Instruction::{:?}", self.opcode)?;
         match self.opcode {
-            OpCode::Record
-            | OpCode::Negation
-            | OpCode::ToInt
-            | OpCode::Negative
-            | OpCode::Concat
-            | OpCode::Copy => {
+            op if op.is_unary() => {
                 let (dest, data) = unsafe { &self.args.unary_local };
                 write!(f, "({dest:?}, {data:?})")
             }
-            OpCode::Eq
-            | OpCode::NEq
-            | OpCode::Gt
-            | OpCode::Lt
-            | OpCode::LtE
-            | OpCode::GtE
-            | OpCode::And
-            | OpCode::Or
-            | OpCode::Matches
-            | OpCode::MatchesNot
-            | OpCode::Add
-            | OpCode::Subtract
-            | OpCode::Multiply
-            | OpCode::Divide
-            | OpCode::Raise
-            | OpCode::Modulo => {
+            op if op.is_binary() => {
                 let (dest, lhs, rhs) = unsafe { &self.args.binary_local };
                 write!(f, "({dest:?}, {lhs:?}, {rhs:?})")
             }
-            OpCode::Load | OpCode::LoadConst | OpCode::Store => {
+            op if op.is_load_store() => {
                 let (dest, src) = unsafe { &self.args.load_store };
                 write!(f, "({dest:?}, {src:?})")
             }
@@ -323,13 +338,17 @@ impl Display for Instruction {
                 let (dest, lhs, rhs) = unsafe { &self.args.binary_local };
                 write!(f, "{dest} <- {op} {lhs}, {rhs}")
             }
-            op @ (OpCode::Load | OpCode::Store) => {
+            op @ (OpCode::LoadUser | OpCode::StoreUser) => {
                 let (dest, src) = unsafe { &self.args.load_store };
-                write!(f, "{dest} <- {op} global[{src}]")
+                write!(f, "{dest} <- {op} user[{src}]")
             }
             op @ OpCode::LoadConst => {
                 let (dest, src) = unsafe { &self.args.load_store };
                 write!(f, "{dest} <- {op} mem[{src}]")
+            }
+            op @ (OpCode::StoreBuiltin | OpCode::LoadBultin) => {
+                let (dest, src) = unsafe { &self.args.load_store };
+                write!(f, "{dest} <- {op} intrinsic[{src}]")
             }
             op @ OpCode::BrIf => {
                 let (cond, label) = unsafe { self.args.br_if };
@@ -375,9 +394,11 @@ impl Display for OpCode {
             Self::Divide => "div",
             Self::Raise => "pow",
             Self::Modulo => "mod",
-            Self::Load => "vload",
+            Self::LoadUser => "vload",
+            Self::LoadBultin => "iload",
             Self::LoadConst => "cload",
-            Self::Store => "vstore",
+            Self::StoreUser => "vstore",
+            Self::StoreBuiltin => "istore",
             Self::Copy => "cpy",
             Self::IntrinsicCall => "icall",
             Self::UserCall => "ucall",

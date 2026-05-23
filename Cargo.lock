@@ -504,6 +504,7 @@ dependencies = [
  "bumpalo",
  "color-eyre",
  "either",
+ "hashbrown 0.17.1",
  "indexmap",
  "memchr",
  "parser",

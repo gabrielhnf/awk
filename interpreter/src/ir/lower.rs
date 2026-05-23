@@ -9,20 +9,21 @@ use std::mem::forget;
 
 use bumpalo::{Bump, collections::Vec};
 use indexmap::IndexSet;
-use parser::{Atom, BinaryOperator, Expr, ExprNode, UnaryOperator};
+use parser::{Atom, BinaryOperator, Expr, ExprNode, UnaryOperator, Variable};
 
-use crate::ir::{Hint, HintedReg, Instruction, Label, NonLocal, OpCode, Reg};
-
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
-pub struct Value(f64); // TODO: use NaN-boxing.
+use crate::{
+    ir::{Hint, HintedReg, Instruction, Label, NonLocal, OpCode, Reg},
+    vm::{ExecMode, Interpreter, SymbolTable, Value},
+};
 
 #[derive(Debug)]
-struct Code<'a> {
-    arena: &'a Bump,
-    bc: Bytecode<'a>,
-    consts: &'a mut IndexSet<Value>,
-    free_regs: Vec<'a, Reg>,
-    reg_pointer: u16,
+pub struct Code<'arena> {
+    pub arena: &'arena Bump,
+    pub bc: Bytecode<'arena>,
+    pub consts: IndexSet<Value>,
+    pub symbols: SymbolTable<'arena>,
+    free_regs: Vec<'arena, Reg>,
+    pub reg_pointer: u16,
 }
 
 #[must_use]
@@ -38,10 +39,10 @@ impl Code<'_> {
     fn lower_expr_into(&mut self, expr: &Expr, dest: Reg) -> Hint {
         match expr {
             Expr::Leaf(atom) => match atom {
-                Atom::Variable(var) => {
-                    let src = NonLocal(crate::index_for_global(var));
+                Atom::Variable(Variable::User(ident)) => {
+                    let src = self.symbols.register_user_var(ident, self.arena);
                     self.bc
-                        .emit(Instruction::load_store(OpCode::Load, dest, src));
+                        .emit(Instruction::load_store(OpCode::LoadUser, dest, src));
                 }
                 &Atom::Number(n) => {
                     let src = self.register_const(Value(n));
@@ -106,8 +107,8 @@ impl Code<'_> {
 }
 
 #[derive(Debug, Clone)]
-struct Bytecode<'a> {
-    code: Vec<'a, Instruction>,
+pub struct Bytecode<'a> {
+    pub code: Vec<'a, Instruction>,
 }
 
 #[derive(Clone, Debug)]
@@ -167,13 +168,17 @@ pub fn test_interpreter(expr: &Expr<'_>) -> impl Display {
     let mut c = Code {
         arena: &bump,
         bc: Bytecode::new_in(&bump),
-        consts: &mut IndexSet::new(),
+        consts: IndexSet::new(),
+        symbols: SymbolTable::new_in(&bump),
         reg_pointer: 0,
         free_regs: Vec::new_in(&bump),
     };
     let result = c.lower_expr(expr);
     forget(result);
-    c.to_string()
+    let code = c.to_string();
+    let mut vm = Interpreter::new(ExecMode::Uu, c);
+    vm.run();
+    format!("{code}---\n{vm:#?}")
 }
 
 impl From<UnaryOperator> for OpCode {
