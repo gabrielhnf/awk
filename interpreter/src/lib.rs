@@ -6,6 +6,7 @@
 #![allow(dead_code)]
 
 pub(crate) mod ir;
+mod types;
 mod vm;
 
 pub use ir::test_interpreter;

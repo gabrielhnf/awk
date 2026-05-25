@@ -1,4 +1,7 @@
-use std::fmt::{self, Display};
+use std::{
+    fmt::{self, Display},
+    mem::replace,
+};
 
 use ahash::RandomState;
 use bumpalo::{Bump, collections::Vec};
@@ -6,14 +9,13 @@ use hashbrown::HashMap;
 use indexmap_allocator_api::{IndexMap, IndexSet};
 use parser::Identifier;
 
-use crate::ir::{
-    NonLocal, OpCode, Reg,
-    lower::{Bytecode, Code},
+use crate::{
+    ir::{
+        NonLocal, OpCode, Reg,
+        lower::{Bytecode, Code, ValueContext},
+    },
+    types::Value,
 };
-
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-#[repr(transparent)]
-pub struct Value(pub f64); // TODO: use NaN-boxing.
 
 #[derive(Debug)]
 pub enum ExecMode {
@@ -53,7 +55,7 @@ impl<'a> Interpreter<'a> {
             arena: code.arena,
             bc: code.bc,
             program_counter: 0,
-            registers: Registers(bumpalo::vec![in code.arena; Value(0.); 8]),
+            registers: Registers(bumpalo::vec![in code.arena; Value::Untyped; 8]),
             symbols: code.symbols,
             consts: code.consts,
             compat,
@@ -68,12 +70,18 @@ impl<'a> SymbolTable<'a> {
             records: HashMap::with_hasher_in(RandomState::new(), arena),
         }
     }
-    fn lookup_user_var(&self, var: NonLocal) -> &Value {
-        self.user.get_index(var.0 as _).unwrap().1
+
+    fn lookup_user_var(&mut self, var: NonLocal, ctx: ValueContext) -> &Value {
+        let v = self.user.get_index_mut(var.0 as _).unwrap().1;
+        match ctx {
+            ValueContext::Untyped => v,
+            ValueContext::Scalar => v.scalar_context(),
+            ValueContext::Array => v.array_context(),
+        }
     }
 
-    fn write_user_val(&mut self, var: NonLocal, value: &Value) {
-        *self.user.get_index_mut(var.0 as _).unwrap().1 = Value::clone(value);
+    fn write_user_val(&mut self, var: NonLocal, value: Value) {
+        *self.user.get_index_mut(var.0 as _).unwrap().1 = value;
     }
 
     pub fn register_user_var(&mut self, var: &Identifier, bump: &'a Bump) -> NonLocal {
@@ -84,7 +92,7 @@ impl<'a> SymbolTable<'a> {
                 namespace: bump.alloc_str(var.namespace),
                 literal: bump.alloc_str(var.literal),
             };
-            NonLocal(self.user.insert_full(ident, Value(0.)).0 as _)
+            NonLocal(self.user.insert_full(ident, Value::Untyped).0 as _)
         }
     }
 }
@@ -101,37 +109,41 @@ impl Interpreter<'_> {
             match instr {
                 // ix if let Some(&(dest, src)) = ix.get_unary() => {}
                 ix if let Some(&(dest, lhs, rhs)) = ix.get_binary() => {
-                    let lhs = self.registers.read(lhs);
-                    let rhs = self.registers.read(rhs);
+                    let lhs = self.registers.get(lhs);
+                    let rhs = self.registers.get(rhs);
                     let val = match ix.opcode {
-                        OpCode::Add => Value(lhs.0 + rhs.0),
-                        OpCode::Subtract => Value(lhs.0 - rhs.0),
-                        OpCode::Multiply => Value(lhs.0 * rhs.0),
-                        OpCode::Divide => Value(lhs.0 / rhs.0),
+                        OpCode::Add => lhs + rhs,
+                        OpCode::Subtract => lhs - rhs,
+                        OpCode::Multiply => lhs * rhs,
+                        OpCode::Divide => lhs / rhs,
                         _ => todo!(),
                     };
-                    self.registers.write(dest, &val);
+                    self.registers.write(dest, val);
                 }
                 ix if let Some(&(dest, src)) = ix.get_load_store() => match ix.opcode {
                     OpCode::LoadConst => self
                         .registers
-                        .write(dest, self.consts.0.get_index(src.0 as _).unwrap()),
+                        .write(dest, self.consts.0.get_index(src.0 as _).unwrap().clone()),
                     OpCode::LoadUser => {
-                        self.registers
-                            .write(dest, self.symbols.lookup_user_var(src));
+                        self.registers.write(
+                            dest,
+                            self.symbols.lookup_user_var(src, ix.hint.into()).clone(),
+                        );
                     }
                     OpCode::StoreUser => {
-                        self.symbols.write_user_val(src, self.registers.read(dest));
+                        self.symbols
+                            .write_user_val(src, self.registers.get(dest).clone());
                     }
                     _ => todo!(),
                 },
                 ix if let Some((cond, true_to, false_to)) = ix.get_branch() => {
-                    let label = if self.registers.read(*cond).0 == 0. {
-                        false_to.0
-                    } else {
+                    let label = if self.registers.get(*cond).to_bool() {
                         true_to.0
+                    } else {
+                        false_to.0
                     };
                     self.program_counter = label as _;
+
                     continue;
                 }
                 ix if let Some(label) = ix.get_jump() => {
@@ -146,11 +158,18 @@ impl Interpreter<'_> {
 }
 
 impl Registers<'_> {
-    fn read(&self, src: Reg) -> &Value {
+    fn replace(&mut self, src: Reg, f: impl FnOnce(Value) -> Value) {
+        let val = replace(self.get_mut(src), Value::Untyped);
+        self.write(src, f(val));
+    }
+    fn get(&self, src: Reg) -> &Value {
         &self.0[src.0 as usize]
     }
-    fn write(&mut self, dest: Reg, src: &Value) {
-        self.0[dest.0 as usize] = Value::clone(src);
+    fn get_mut(&mut self, src: Reg) -> &mut Value {
+        &mut self.0[src.0 as usize]
+    }
+    fn write(&mut self, dest: Reg, src: Value) {
+        self.0[dest.0 as usize] = src;
     }
 }
 

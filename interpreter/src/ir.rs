@@ -16,6 +16,8 @@ use std::fmt::{Debug, Display};
 
 pub use lower::test_interpreter;
 
+use crate::ir::lower::ValueContext;
+
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
 pub struct NonLocal(pub u16);
@@ -140,13 +142,13 @@ impl Instruction {
         }
     }
 
-    fn load_store(opcode: impl Into<OpCode>, dest: Reg, src: NonLocal) -> Self {
+    fn load_store(opcode: impl Into<OpCode>, dest: Reg, src: NonLocal, ctx: ValueContext) -> Self {
         let opcode = opcode.into();
         debug_assert!(opcode.is_load_store());
         Self {
             opcode,
             args: Arguments { load_store: (dest, src) },
-            hint: Hint::None,
+            hint: ctx.into(),
         }
     }
 
@@ -252,11 +254,33 @@ pub enum Hint {
     UnboxedFloat64,
     UnboxedLhsFloat64,
     UnboxedRhsFloat64,
+    ScalarCtx,
+    ArrayCtx,
 }
 
 trait HintedReg {
     fn reg(&self) -> Reg;
     fn hint(&self) -> Hint;
+}
+
+impl From<ValueContext> for Hint {
+    fn from(value: ValueContext) -> Self {
+        match value {
+            ValueContext::Scalar => Self::ScalarCtx,
+            ValueContext::Array => Self::ArrayCtx,
+            ValueContext::Untyped => Self::None,
+        }
+    }
+}
+
+impl From<Hint> for ValueContext {
+    fn from(value: Hint) -> Self {
+        match value {
+            Hint::ScalarCtx => Self::Scalar,
+            Hint::ArrayCtx => Self::Array,
+            _ => Self::Untyped,
+        }
+    }
 }
 
 impl Debug for Instruction {
@@ -346,6 +370,8 @@ impl Display for Instruction {
             Hint::UnboxedFloat64 => write!(f, " @ all_unboxedf64"),
             Hint::UnboxedLhsFloat64 => write!(f, " @ lhs_unboxedf64"),
             Hint::UnboxedRhsFloat64 => write!(f, " @ rhs_unboxedf64"),
+            Hint::ScalarCtx => write!(f, "@ scalar_ctx"),
+            Hint::ArrayCtx => write!(f, "@ array_ctx"),
             Hint::None => Ok(()),
         }
     }
