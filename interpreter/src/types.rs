@@ -1,6 +1,8 @@
 use std::{
     borrow::Cow,
+    fmt::Display,
     hash::Hash,
+    io::Write,
     mem::discriminant,
     ops::{Add, Div, Mul, Sub},
 };
@@ -62,6 +64,26 @@ impl Value<'_> {
             _ => 0.,
         }
     }
+
+    pub fn write_string(&self, f: &mut Vec<u8>) {
+        match self {
+            Self::String(s) | Self::Regex(s) => f.extend_from_slice(s),
+            Self::Float(n) => write!(f, "{n}").unwrap(),
+            &Self::Bool(false) => f.push(b'0'),
+            &Self::Bool(true) => f.push(b'1'),
+            Self::Array(_) => panic!("Attempted to use array in scalar context!"),
+            _ => {}
+        }
+    }
+
+    pub fn string_size_hint(&self) -> usize {
+        match self {
+            Self::String(s) | Self::Regex(s) => s.len(),
+            Self::Float(_) => 2,
+            Self::Bool(_) => 1,
+            _ => 0,
+        }
+    }
 }
 
 impl<'a> Add for &'_ Value<'a> {
@@ -106,6 +128,20 @@ impl Hash for Value<'_> {
             Self::String(s) => s.hash(state),
             Self::Bool(b) => b.hash(state),
             _ => {}
+        }
+    }
+}
+
+impl Display for Value<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Float(n) => <_ as Display>::fmt(n, f),
+            Value::String(s) => write!(f, "{:?}", String::from_utf8_lossy(s)),
+            Value::Regex(s) => write!(f, "/{}/", String::from_utf8_lossy(s)),
+            &Value::Bool(b) => write!(f, "{}", b as usize),
+            Value::Array(_) => write!(f, "array"),
+            Value::Untyped => write!(f, "untyped"),
+            Value::Unassigned => write!(f, "unassigned"),
         }
     }
 }

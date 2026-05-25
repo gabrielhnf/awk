@@ -1,6 +1,7 @@
 use std::{
     fmt::{self, Display},
     mem::replace,
+    vec::Vec as StdVec,
 };
 
 use ahash::RandomState;
@@ -117,6 +118,14 @@ impl Interpreter<'_> {
                             OpCode::Subtract => lhs - rhs,
                             OpCode::Multiply => lhs * rhs,
                             OpCode::Divide => lhs / rhs,
+                            OpCode::Concat => {
+                                let mut buf = StdVec::with_capacity(
+                                    lhs.string_size_hint() + rhs.string_size_hint(),
+                                );
+                                lhs.write_string(&mut buf);
+                                rhs.write_string(&mut buf);
+                                Value::String(buf.into())
+                            }
                             _ => todo!(),
                         }
                     };
@@ -203,7 +212,7 @@ impl Display for Registers<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Registers:")?;
         let n = self.0.len().checked_ilog10().unwrap_or(0) as usize + 1;
-        fmt_list(f, self.0.iter(), |f, i, e| write!(f, "r{i:0n$} = {e:?}"))
+        fmt_list(f, self.0.iter(), |f, i, e| write!(f, "r{i:0n$} = {e}"))
     }
 }
 
@@ -211,7 +220,7 @@ impl Display for SymbolTable<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Symbols:")?;
         fmt_list(f, self.user.iter(), |f, i, (k, v)| {
-            write!(f, "user[{i}] @ {k} = {v:?}")
+            write!(f, "user[{i}] @ {k} = {v}")
         })
     }
 }
@@ -219,7 +228,7 @@ impl Display for SymbolTable<'_> {
 impl Display for Consts<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Consts:")?;
-        fmt_list(f, self.0.iter(), |f, i, e| write!(f, "mem[{i}] = {e:?}"))
+        fmt_list(f, self.0.iter(), |f, i, e| write!(f, "mem[{i}] = {e}"))
     }
 }
 

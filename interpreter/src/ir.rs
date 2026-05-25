@@ -224,6 +224,7 @@ impl OpCode {
                 | Self::Divide
                 | Self::Raise
                 | Self::Modulo
+                | Self::Concat
         )
     }
 
