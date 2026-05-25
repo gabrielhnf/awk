@@ -90,6 +90,35 @@ impl<'a> Code<'a> {
                 ));
                 self.free_reg(condition);
             }
+            Statement::For { init, condition, update, body } => {
+                if let Some(SimpleStatement::Expression(expr)) = init {
+                    let reg = self.lower_expr(expr, ValueContext::Untyped);
+                    self.free_reg(reg);
+                }
+                let cond_label = self.following_instr(0);
+                if let Some(condition) = condition {
+                    let condition = self.lower_expr(condition, ValueContext::Scalar);
+                    let body_label = self.following_instr(1);
+                    let while_label =
+                        self.bc
+                            .emit(Instruction::branch(condition.reg(), body_label, Label(0)));
+                    self.free_reg(condition);
+                    self.lower_body(body);
+                    if let Some(SimpleStatement::Expression(expr)) = update {
+                        let reg = self.lower_expr(expr, ValueContext::Untyped);
+                        self.free_reg(reg);
+                    }
+                    self.bc.emit(Instruction::jump(cond_label));
+                    self.bc.nth(while_label).args.branch.2 = self.following_instr(0);
+                } else {
+                    self.lower_body(body);
+                    if let Some(SimpleStatement::Expression(expr)) = update {
+                        let reg = self.lower_expr(expr, ValueContext::Untyped);
+                        self.free_reg(reg);
+                    }
+                    self.bc.emit(Instruction::jump(cond_label));
+                }
+            }
             Statement::Simple(SimpleStatement::Expression(expr)) => {
                 let reg = self.lower_expr(expr, ValueContext::Untyped);
                 self.free_reg(reg);
