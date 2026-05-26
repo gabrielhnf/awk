@@ -320,7 +320,6 @@ impl Display for Instruction {
             | OpCode::Negation
             | OpCode::ToInt
             | OpCode::Negative
-            | OpCode::Concat
             | OpCode::Copy) => {
                 let (dest, data) = unsafe { &self.args.unary_local };
                 write!(f, "{dest} <- {op} {data}")
@@ -340,6 +339,7 @@ impl Display for Instruction {
             | OpCode::Multiply
             | OpCode::Divide
             | OpCode::Raise
+            | OpCode::Concat
             | OpCode::Modulo) => {
                 let (dest, lhs, rhs) = unsafe { &self.args.binary_local };
                 write!(f, "{dest} <- {op} {lhs}, {rhs}")

@@ -117,7 +117,7 @@ impl Interpreter<'_> {
                     let src = self.registers.get(src);
                     let val = match ix.opcode {
                         OpCode::Record => todo!(),
-                        OpCode::Negation => Value::Float(!src.to_bool() as usize as f64),
+                        OpCode::Negation => Value::b2f(!src.to_bool()),
                         OpCode::ToInt => Value::Float(src.to_num()),
                         OpCode::Negative => Value::Float(-src.to_num()),
                         _ => unreachable!(),
