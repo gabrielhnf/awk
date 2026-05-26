@@ -127,6 +127,8 @@ impl Interpreter<'_> {
                         OpCode::Subtract => lhs - rhs,
                         OpCode::Multiply => lhs * rhs,
                         OpCode::Divide => lhs / rhs,
+                        OpCode::Raise => lhs ^ rhs,
+                        OpCode::Modulo => lhs % rhs,
                         // Float values on boolean cmps are intentional.
                         OpCode::Eq => Value::Float((lhs == rhs) as usize as _),
                         OpCode::NEq => Value::Float((lhs != rhs) as usize as _),

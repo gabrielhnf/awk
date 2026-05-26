@@ -4,7 +4,7 @@ use std::{
     hash::Hash,
     io::Write,
     mem::discriminant,
-    ops::{Add, Div, Mul, Sub},
+    ops::{Add, BitXor, Div, Mul, Rem, Sub},
 };
 
 use ahash::RandomState;
@@ -114,8 +114,29 @@ impl<'a> Div for &'_ Value<'a> {
     type Output = Value<'a>;
 
     fn div(self, rhs: Self) -> Self::Output {
+        let rhs = rhs.to_num();
         // TODO: panic "nicely" on div by zero.
-        Value::Float(self.to_num() / rhs.to_num())
+        assert!(rhs != 0., "Division by zero attempted in '/'!");
+        Value::Float(self.to_num() / rhs)
+    }
+}
+
+impl<'a> BitXor for &'_ Value<'a> {
+    type Output = Value<'a>;
+
+    fn bitxor(self, rhs: Self) -> Self::Output {
+        Value::Float(self.to_num().powf(rhs.to_num()))
+    }
+}
+
+impl<'a> Rem for &'_ Value<'a> {
+    type Output = Value<'a>;
+
+    fn rem(self, rhs: Self) -> Self::Output {
+        let (lhs, rhs) = (self.to_num(), rhs.to_num());
+        // TODO: panic "nicely" on div by zero.
+        assert!(lhs != 0. || rhs != 0., "Division by zero attempted in '%'!");
+        Value::Float(lhs % rhs)
     }
 }
 
