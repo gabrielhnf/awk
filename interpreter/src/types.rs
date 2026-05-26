@@ -10,7 +10,7 @@ use std::{
 use ahash::RandomState;
 use hashbrown::HashMap;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Value<'a> {
     Float(f64),
     String(Cow<'a, [u8]>),
@@ -116,6 +116,37 @@ impl<'a> Div for &'_ Value<'a> {
     fn div(self, rhs: Self) -> Self::Output {
         // TODO: panic "nicely" on div by zero.
         Value::Float(self.to_num() / rhs.to_num())
+    }
+}
+
+impl PartialEq for Value<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            // Numeric comparisons
+            (&Self::Float(lhs), &Self::Float(rhs)) => lhs == rhs,
+            (&Self::Bool(lhs), &Self::Bool(rhs)) => lhs == rhs,
+            (&Self::Float(f), &Self::Bool(b)) | (&Self::Bool(b), &Self::Float(f)) => b && f == 1.,
+            // String-based comparisons
+            (Self::String(lhs) | Self::Regex(lhs), Self::String(rhs) | Self::Regex(rhs)) => {
+                lhs == rhs
+            }
+            (&Self::Float(f), Self::String(s) | Self::Regex(s))
+            | (Self::String(s) | Self::Regex(s), &Self::Float(f)) => {
+                f.to_string().as_bytes() == s.as_ref()
+            }
+            (&Self::Bool(b), Self::String(s) | Self::Regex(s))
+            | (Self::String(s) | Self::Regex(s), &Self::Bool(b)) => {
+                (if b { b"1" } else { b"0" }) == s.as_ref()
+            }
+            // True on empty string value.
+            (Self::Untyped | Self::Unassigned, Self::String(s) | Self::Regex(s))
+            | (Self::String(s) | Self::Regex(s), Self::Untyped | Self::Unassigned) => s.is_empty(),
+            (Self::Untyped | Self::Unassigned, Self::Untyped | Self::Unassigned) => true,
+            (Self::Untyped | Self::Unassigned, _) | (_, Self::Untyped | Self::Unassigned) => false,
+            (Self::Array(_), _) | (_, Self::Array(_)) => {
+                panic!("Attempted to use array in scalar context!")
+            }
+        }
     }
 }
 

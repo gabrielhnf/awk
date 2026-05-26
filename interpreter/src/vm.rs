@@ -12,7 +12,7 @@ use parser::Identifier;
 
 use crate::{
     ir::{
-        NonLocal, OpCode, Reg,
+        Label, NonLocal, OpCode, Reg,
         lower::{Bytecode, Code, ValueContext},
     },
     types::Value,
@@ -127,6 +127,9 @@ impl Interpreter<'_> {
                         OpCode::Subtract => lhs - rhs,
                         OpCode::Multiply => lhs * rhs,
                         OpCode::Divide => lhs / rhs,
+                        // Float values on boolean cmps are intentional.
+                        OpCode::Eq => Value::Float((lhs == rhs) as usize as _),
+                        OpCode::NEq => Value::Float((lhs != rhs) as usize as _),
                         OpCode::Concat => {
                             let mut buf = StdVec::with_capacity(
                                 lhs.string_size_hint() + rhs.string_size_hint(),
@@ -154,18 +157,17 @@ impl Interpreter<'_> {
                     }
                     _ => todo!(),
                 },
-                ix if let Some((cond, true_to, false_to)) = ix.get_branch() => {
+                ix if let Some((cond, Label(true_to), Label(false_to))) = ix.get_branch() => {
                     let label = if self.registers.get(*cond).to_bool() {
-                        true_to.0
+                        *true_to
                     } else {
-                        false_to.0
+                        *false_to
                     };
                     self.program_counter = label as _;
-
                     continue;
                 }
-                ix if let Some(label) = ix.get_jump() => {
-                    self.program_counter = label.0 as _;
+                ix if let Some(&Label(label)) = ix.get_jump() => {
+                    self.program_counter = label as _;
                     continue;
                 }
                 ix => todo!("{ix:?}"),
