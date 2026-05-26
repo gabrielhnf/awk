@@ -4,7 +4,7 @@ use std::{
     hash::Hash,
     io::Write,
     mem::discriminant,
-    ops::{Add, Div, Mul, Sub},
+    ops::{Add, Div, Mul, Neg, Not, Rem, Sub},
 };
 
 use ahash::RandomState;
@@ -65,6 +65,14 @@ impl Value<'_> {
         }
     }
 
+    pub fn pow(&self, rhs: &Self) -> Self {
+        Value::Float(self.to_num().powf(rhs.to_num()))
+    }
+
+    pub fn to_int(&self) -> Self {
+        Value::Float(self.to_num().trunc())
+    }
+
     pub fn write_string(&self, f: &mut Vec<u8>) {
         match self {
             Self::String(s) | Self::Regex(s) => f.extend_from_slice(s),
@@ -119,7 +127,44 @@ impl<'a> Div for &'_ Value<'a> {
     }
 }
 
+impl<'a> Rem for &'_ Value<'a> {
+    type Output = Value<'a>;
+
+    fn rem(self, rhs: Self) -> Self::Output {
+        Value::Float(self.to_num() % rhs.to_num())
+    }
+}
+
+impl<'a> Neg for &'_ Value<'a> {
+    type Output = Value<'a>;
+
+    fn neg(self) -> Self::Output {
+        Value::Float(-self.to_num())
+    }
+}
+
+impl<'a> Not for &'_ Value<'a> {
+    type Output = Value<'a>;
+
+    fn not(self) -> Self::Output {
+        Value::Bool(!self.to_bool())
+    }
+}
+
 impl Eq for Value<'_> {}
+impl PartialOrd for Value<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Value::Float(a), Value::Float(b)) => a.partial_cmp(b),
+            (Value::Bool(a), Value::Bool(b)) => a.partial_cmp(b),
+            (Value::String(a), Value::String(b)) => a.partial_cmp(b),
+            //TODO: handle mixed type comparisons following awk's coercion rules
+            // (e.g. numeric strings should compare numerically, Unassigned is "" or 0 depending on
+            // context)
+            _ => None,
+        }
+    }
+}
 impl Hash for Value<'_> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         discriminant(self).hash(state);

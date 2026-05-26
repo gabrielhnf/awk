@@ -108,7 +108,16 @@ impl Interpreter<'_> {
     pub fn run(&mut self) {
         while let Some(instr) = self.bc.code.get(self.program_counter) {
             match instr {
-                // ix if let Some(&(dest, src)) = ix.get_unary() => {}
+                ix if let Some(&(dest, src)) = ix.get_unary() => {
+                    let src = self.registers.get(src);
+                    let val = match ix.opcode {
+                        OpCode::Negative => -src,
+                        OpCode::Negation => !src,
+                        OpCode::ToInt => src.to_int(),
+                        _ => todo!(),
+                    };
+                    self.registers.write(dest, val);
+                }
                 ix if let Some(&(dest, lhs, rhs)) = ix.get_binary() => {
                     let val = {
                         let lhs = self.registers.get(lhs);
@@ -118,6 +127,8 @@ impl Interpreter<'_> {
                             OpCode::Subtract => lhs - rhs,
                             OpCode::Multiply => lhs * rhs,
                             OpCode::Divide => lhs / rhs,
+                            OpCode::Raise => lhs.pow(rhs),
+                            OpCode::Modulo => lhs % rhs,
                             OpCode::Concat => {
                                 let mut buf = StdVec::with_capacity(
                                     lhs.string_size_hint() + rhs.string_size_hint(),
@@ -126,6 +137,14 @@ impl Interpreter<'_> {
                                 rhs.write_string(&mut buf);
                                 Value::String(buf.into())
                             }
+                            OpCode::Eq => Value::Bool(lhs == rhs),
+                            OpCode::NEq => Value::Bool(lhs != rhs),
+                            OpCode::Gt => Value::Bool(lhs > rhs),
+                            OpCode::GtE => Value::Bool(lhs >= rhs),
+                            OpCode::Lt => Value::Bool(lhs < rhs),
+                            OpCode::LtE => Value::Bool(lhs <= rhs),
+                            OpCode::And => Value::Bool(lhs.to_bool() && rhs.to_bool()),
+                            OpCode::Or => Value::Bool(lhs.to_bool() || rhs.to_bool()),
                             _ => todo!(),
                         }
                     };

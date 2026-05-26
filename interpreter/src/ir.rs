@@ -42,7 +42,6 @@ pub enum OpCode {
     Negation,
     ToInt,
     Negative,
-    Concat,
 
     // Binary operations
     Eq,
@@ -61,6 +60,7 @@ pub enum OpCode {
     Divide,
     Raise,
     Modulo,
+    Concat,
 
     // Intrinsic operations
     LoadUser,
