@@ -54,6 +54,18 @@ impl<'a, 'b> Pratt<'a, 'b> {
         self.fold_rhs(lex, lhs, min_bp, |_| false)
     }
 
+    fn parse_index_exprs(
+        &mut self,
+        lex: &mut Lexer<'a>,
+        op: ArrayOperator,
+    ) -> Result<Vec<'a, Expr<'a>>> {
+        lex.next();
+        let expr = self.parse_expression(lex, op.binding_power().1)?;
+        let indices = self.parse_comma_expr(lex, expr)?;
+        lex.expect(&Token::ClosedBracket, ParsingError::UnclosedArrayAccess)?;
+        Ok(indices)
+    }
+
     fn fold_rhs(
         &mut self,
         lex: &mut Lexer<'a>,
@@ -101,24 +113,34 @@ impl<'a, 'b> Pratt<'a, 'b> {
                 self.parse_place_op(lex, op, place)?
             } else if let Ok(op) = ArrayOperator::parse(next, &span) {
                 match op {
-                    ArrayOperator::Index => {
-                        let place = match Place::lower_from(lhs.take(), lex.span()) {
-                            Ok(Place::Variable(var)) => var,
-                            Ok(_) => return Err(ParsingError::OperatorExpectsVariable(lex.span())),
-                            Err((expr, _)) => {
-                                lhs = expr;
-                                if op.binding_power().0 < min_bp {
-                                    break;
-                                }
-                                return Err(ParsingError::OperatorExpectsVariable(lex.span()));
+                    ArrayOperator::Index => match Place::lower_from(lhs.take(), lex.span()) {
+                        Ok(Place::Variable(var)) => {
+                            let index = self.parse_index_exprs(lex, op)?;
+                            Expr::node(op.expr(var, index), self.parser.arena)
+                        }
+                        Ok(Place::Index(var, index)) => {
+                            let new_indices = self.parse_index_exprs(lex, op)?;
+                            let inner = Expr::node(
+                                ExprNode::ArrayOperation(ArrayOperator::Index, var, index),
+                                self.parser.arena,
+                            );
+                            Expr::node(ExprNode::NestedArray(inner, new_indices), self.parser.arena)
+                        }
+                        Ok(Place::ChainedIndex(arr, indices)) => {
+                            let new_indices = self.parse_index_exprs(lex, op)?;
+                            let inner =
+                                Expr::node(ExprNode::NestedArray(arr, indices), self.parser.arena);
+                            Expr::node(ExprNode::NestedArray(inner, new_indices), self.parser.arena)
+                        }
+                        Ok(_) => return Err(ParsingError::OperatorExpectsVariable(lex.span())),
+                        Err((expr, _)) => {
+                            lhs = expr;
+                            if op.binding_power().0 < min_bp {
+                                break;
                             }
-                        };
-                        lex.next();
-                        let expr = self.parse_expression(lex, op.binding_power().1)?;
-                        let comma_expr = self.parse_comma_expr(lex, expr)?;
-                        lex.expect(&Token::ClosedBracket, ParsingError::UnclosedArrayAccess)?;
-                        Expr::node(op.expr(place, comma_expr), self.parser.arena)
-                    }
+                            return Err(ParsingError::OperatorExpectsVariable(lex.span()));
+                        }
+                    },
                     ArrayOperator::In => {
                         lex.next();
                         let Place::Variable(var) = self.parse_place(lex)? else {

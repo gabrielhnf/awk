@@ -240,6 +240,11 @@ impl Display for Place<'_> {
                 write_args(f, args, 0)?;
                 write!(f, "]")
             }
+            Self::ChainedIndex(arr, args) => {
+                write!(f, "{arr}[")?;
+                write_args(f, args, 0)?;
+                write!(f, "]")
+            }
         }
     }
 }
@@ -314,6 +319,19 @@ impl Display for ExprNode<'_> {
                         write!(f, "{:right_w$} in {arr}", args[0])?;
                     }
                 }
+                if left_bp < parent_bp {
+                    write!(f, ")")?;
+                }
+                Ok(())
+            }
+            Self::NestedArray(arr, args) => {
+                let left_bp = ArrayOperator::Index.binding_power().0;
+                if left_bp < parent_bp {
+                    write!(f, "(")?;
+                }
+                write!(f, "{arr}[")?;
+                write_args(f, args, indent)?;
+                write!(f, "]")?;
                 if left_bp < parent_bp {
                     write!(f, ")")?;
                 }

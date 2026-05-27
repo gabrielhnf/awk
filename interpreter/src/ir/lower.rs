@@ -286,6 +286,7 @@ impl<'a> Code<'a> {
                 self.bc
                     .emit(Instruction::LoadBuiltinArray((dest, dest, var_index(var))));
             }
+            Place::ChainedIndex(_, _) => todo!(),
         }
     }
 
@@ -317,6 +318,7 @@ impl<'a> Code<'a> {
                     .emit(Instruction::StoreBuiltinArray((src, *rhs, var_index(var))));
                 self.free_reg(rhs);
             }
+            Place::ChainedIndex(_, _) => todo!(),
         }
     }
 

@@ -200,6 +200,13 @@ impl Debug for Expr<'_> {
                     }
                     write!(f, ")")
                 }
+                ExprNode::NestedArray(inner, args) => {
+                    write!(f, "(Index {inner:?}")?;
+                    for arg in args {
+                        write!(f, " {arg:?}")?;
+                    }
+                    write!(f, ")")
+                }
                 ExprNode::UnaryPlaceOperation(op, a) => write!(f, "({op:?} {a:?})"),
                 ExprNode::Ternary(a, b, c) => write!(f, "(?: {a:?} {b:?} {c:?})"),
                 ExprNode::Getline(getline) => match getline {
@@ -299,6 +306,13 @@ impl Debug for Place<'_> {
             Self::Variable(var) => <_ as Debug>::fmt(var, f),
             Self::Index(var, index) => {
                 write!(f, "(Index {var:?}")?;
+                for i in index {
+                    write!(f, " {i:?}")?;
+                }
+                write!(f, ")")
+            }
+            Self::ChainedIndex(expr, index) => {
+                write!(f, "(Index {expr:?}")?;
                 for i in index {
                     write!(f, " {i:?}")?;
                 }
