@@ -283,6 +283,46 @@ fn test_parser_arrays() {
 }
 
 #[test]
+fn test_parser_nested_arrays() {
+    let source = "
+        { a[1][2] }
+        { a[1][2][3] }
+        { a[1][2] = 2 }
+        { a[1][2][3] = 2 }
+        { a[1][2][3][4][5] = 2 }
+        { ++a[1][2] }
+        { a[1][2]-- }
+        { a[1][2] += 1 }
+        { b = a[1][2] }
+        { b = a[1][2][3] }
+        { a[1, 2][3] }
+        { a[1][2, 3] }
+    ";
+    test_parser!(source => {
+        rules: [
+            (None, Some("(body (Index (Index awk::a 1) 2))")),
+            (None, Some("(body (Index (Index (Index awk::a 1) 2) 3))")),
+            (None, Some("(body (Assignment (Index (Index awk::a 1) 2) 2))")),
+            (None, Some("(body (Assignment (Index (Index (Index awk::a 1) 2) 3) 2))")),
+            (None, Some("(body (Assignment (Index (Index (Index (Index (Index awk::a 1) 2) 3) 4) 5) 2))")),
+            (None, Some("(body (IncrementL (Index (Index awk::a 1) 2)))")),
+            (None, Some("(body (DecrementR (Index (Index awk::a 1) 2)))")),
+            (None, Some("(body (AddAssign (Index (Index awk::a 1) 2) 1))")),
+            (None, Some("(body (Assignment awk::b (Index (Index awk::a 1) 2)))")),
+            (None, Some("(body (Assignment awk::b (Index (Index (Index awk::a 1) 2) 3)))")),
+            (None, Some("(body (Index (Index awk::a 1 2) 3))")),
+            (None, Some("(body (Index (Index awk::a 1) 2 3))")),
+        ],
+    });
+
+    test_parser!(is_err!(
+        "{ 2[1][2] }",
+        "{ \"a\"[1][2] }",
+        "{ (a + b)[1][2] }"
+    ));
+}
+
+#[test]
 fn test_parser_for_loop() {
     let source = "
         { for (i = 0; i < n; i++) print }

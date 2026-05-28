@@ -382,15 +382,30 @@ impl<'a, 'b> Pratt<'a, 'b> {
             }
             tok if tok.is_place() => {
                 let expr = self.parse_lhs(lex, 0)?;
-                if lex.consume(&Token::OpenBracket) {
+                if lex.peek_is(&Token::OpenBracket) {
                     let Expr::Leaf(Atom::Variable(var)) = expr else {
                         return Err(ParsingError::OperatorExpectsVariable(start..lex.span().end));
                     };
-                    let expr =
-                        self.parse_expression(lex, ArrayOperator::Index.binding_power().1)?;
-                    let index = self.parse_comma_expr(lex, expr)?;
-                    lex.expect(&Token::ClosedBracket, ParsingError::UnclosedArrayAccess)?;
-                    return Ok(Place::Index(var, index));
+
+                    let index = self.parse_index_exprs(lex, ArrayOperator::Index)?;
+
+                    if !lex.peek_is(&Token::OpenBracket) {
+                        return Ok(Place::Index(var, index));
+                    }
+
+                    let mut lhs = Expr::node(
+                        ExprNode::ArrayOperation(ArrayOperator::Index, var, index),
+                        self.parser.arena,
+                    );
+
+                    while lex.peek_is(&Token::OpenBracket) {
+                        let index = self.parse_index_exprs(lex, ArrayOperator::Index)?;
+                        if lex.peek_is(&Token::OpenBracket) {
+                            lhs = Expr::node(ExprNode::NestedArray(lhs, index), self.parser.arena);
+                        } else {
+                            return Ok(Place::ChainedIndex(lhs, index));
+                        }
+                    }
                 }
                 expr
             }
