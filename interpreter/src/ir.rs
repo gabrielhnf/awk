@@ -15,6 +15,7 @@ pub mod lower;
 use std::fmt::{Debug, Display};
 
 pub use lower::test_interpreter;
+use parser::{Command, Redirection};
 
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
@@ -72,6 +73,7 @@ pub enum Instruction {
     StoreUserArray(MemArrayArg),
     StoreBuiltinArray(MemArrayArg),
     IntrinsicCall(CallArgs),
+    OutputCall(OutputCallArgs),
     UserCall(IndCallArgs),
     IndirectCall(CallArgs),
     Jump(JumpArg),
@@ -88,8 +90,9 @@ pub type MemArrayArg = (Reg, Reg, NonLocal);
 pub type JumpArg = Label;
 pub type RetArg = Reg;
 pub type BranchArg = (Reg, Label, Label);
-pub type CallArgs = (Reg, NonLocal, ArgCount);
-pub type IndCallArgs = (Reg, Reg, ArgCount);
+pub type CallArgs = (Reg, Reg, NonLocal);
+pub type OutputCallArgs = (Reg, Reg, Command, Option<Redirection>);
+pub type IndCallArgs = (Reg, Reg, Reg);
 
 impl Instruction {
     fn set_label(&mut self, label: Label) {
@@ -166,6 +169,12 @@ impl Display for Instruction {
             Self::IntrinsicCall((dest, code, args)) | Self::IndirectCall((dest, code, args)) => {
                 write!(f, "{dest} <- {op} {code}, {args}")
             }
+            Self::OutputCall((start, end, call, Some(redir))) => {
+                write!(f, "{call}{redir:?} {start}, {end}")
+            }
+            Self::OutputCall((start, end, call, None)) => {
+                write!(f, "{call} {start}, {end}")
+            }
             Self::UserCall((dest, src, args)) => {
                 write!(f, "{dest} <- {op} {src}, {args}")
             }
@@ -210,6 +219,7 @@ impl Instruction {
             Self::IntrinsicCall(_) => "icall",
             Self::UserCall(_) => "ucall",
             Self::IndirectCall(_) => "vcall",
+            Self::OutputCall(_) => "out",
             Self::Jump(_) => "jmp",
             Self::Return(_) => "ret",
             Self::Branch(_) => "brif",

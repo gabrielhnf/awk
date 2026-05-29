@@ -121,6 +121,19 @@ impl<'a> Code<'a> {
                 let reg = self.lower_expr(expr);
                 self.free_reg(reg);
             }
+            Statement::Simple(SimpleStatement::Command { name, args, redirection }) => {
+                let (call_start, call_end, redir) = self.gen_call_convention(args, |this| {
+                    redirection.as_ref().map(|(r, expr)| {
+                        let redir_reg = this.alloc_reg();
+                        this.lower_expr_into(expr, *redir_reg);
+                        this.free_reg(redir_reg);
+                        *r
+                    })
+                });
+                self.bc.emit(Instruction::OutputCall((
+                    call_start, call_end, *name, redir,
+                )));
+            }
             _ => todo!(),
         }
     }
@@ -187,9 +200,11 @@ impl<'a> Code<'a> {
                         Label(0),
                     )));
 
-                    state = state.scope(self, |c| {
-                        c.lower_expr_into(true_then, dest);
-                    });
+                    state = state
+                        .scope(self, |c| {
+                            c.lower_expr_into(true_then, dest);
+                        })
+                        .0;
 
                     let jump = self.bc.emit(Instruction::Jump(Label(0)));
                     let label = self.following_instr(0);
@@ -340,6 +355,25 @@ impl<'a> Code<'a> {
         })
     }
 
+    fn gen_call_convention<T>(
+        &mut self,
+        args: &[Expr<'_>],
+        extra: impl FnOnce(&mut Code) -> T,
+    ) -> (Reg, Reg, T) {
+        RegsState::new(self)
+            .scope(self, |this| {
+                let call_start = this.reg_pointer;
+                let call_end = call_start + args.len() as u16;
+
+                this.reg_pointer = call_end;
+                for (i, arg) in args.iter().enumerate() {
+                    this.lower_expr_into(arg, Reg(call_start + i as u16));
+                }
+                (Reg(call_start), Reg(call_end), extra(this))
+            })
+            .1
+    }
+
     fn free_reg(&mut self, reg: LinearReg) {
         self.free_regs.push(reg.into_inner());
     }
@@ -391,12 +425,12 @@ impl RegsState {
             n_free_regs: code.free_regs.len(),
         }
     }
-    fn scope<T>(self, code: &mut Code, f: impl FnOnce(&mut Code) -> T) -> Self {
-        f(code);
+    fn scope<T>(self, code: &mut Code, f: impl FnOnce(&mut Code) -> T) -> (Self, T) {
+        let ret = f(code);
         let old = code.reg_pointer;
         code.reg_pointer = self.reg_pointer;
         code.free_regs.truncate(self.n_free_regs);
-        Self { reg_pointer: old, n_free_regs: self.n_free_regs }
+        (Self { reg_pointer: old, ..self }, ret)
     }
     fn scope_hwm<T>(self, code: &mut Code, f: impl FnOnce(&mut Code) -> T) {
         f(code);

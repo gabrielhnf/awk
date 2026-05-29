@@ -5,7 +5,9 @@
 
 use std::{
     fmt::{self, Display},
+    io::{self, Write},
     mem::replace,
+    ops::Range,
     vec::Vec as StdVec,
 };
 
@@ -13,7 +15,7 @@ use ahash::RandomState;
 use bumpalo::{Bump, collections::Vec};
 use hashbrown::HashMap;
 use indexmap_allocator_api::{IndexMap, IndexSet};
-use parser::Identifier;
+use parser::{Command, Identifier, Redirection};
 
 use crate::{
     ir::{
@@ -49,6 +51,8 @@ pub struct SymbolTable<'a> {
     user: IndexMap<Identifier<'a>, Value<'a>, RandomState, &'a Bump>,
     // separate table for cheap invalidation. It's an arena _visibly shrugs_.
     records: HashMap<usize, Value<'a>, RandomState, &'a Bump>,
+    ofs: Value<'a>,
+    rfs: Value<'a>,
     // etc
 }
 
@@ -74,6 +78,8 @@ impl<'a> SymbolTable<'a> {
         Self {
             user: IndexMap::new_in(arena),
             records: HashMap::with_hasher_in(RandomState::new(), arena),
+            ofs: Value::String(b" ".into()),
+            rfs: Value::String(b"\n".into()),
         }
     }
 
@@ -96,6 +102,12 @@ impl<'a> SymbolTable<'a> {
             };
             NonLocal(self.user.insert_full(ident, Value::Untyped).0 as _)
         }
+    }
+
+    pub fn record(&self, value: Value<'a>) -> &Value<'a> {
+        self.records
+            .get(&(value.to_num() as usize))
+            .unwrap_or(&Value::Unassigned)
     }
 }
 
@@ -188,6 +200,9 @@ impl Interpreter<'_> {
                 Instruction::StoreBuiltinScalar((_dest, _src)) => todo!(),
                 Instruction::StoreBuiltinArray((_dest, _src, _place)) => todo!(),
                 Instruction::IntrinsicCall((_dest, _code, _args)) => todo!(),
+                Instruction::OutputCall((start, end, fun, redir)) => {
+                    self.intrinsic_print(start, end, fun, redir);
+                }
                 Instruction::UserCall((_dest, _code, _args)) => todo!(),
                 Instruction::IndirectCall((_dest, _code, _args)) => todo!(),
                 Instruction::Jump(Label(label)) => {
@@ -207,6 +222,34 @@ impl Interpreter<'_> {
             self.program_counter += 1;
         }
     }
+
+    fn intrinsic_print(&mut self, start: Reg, end: Reg, fun: Command, redir: Option<Redirection>) {
+        let Command::Print = fun else { todo!() };
+        let None = redir else { todo!() };
+        let out = &mut io::stdout().lock();
+        let range = self.registers.get_range(start..end);
+
+        if range.is_empty() {
+            let record = self.symbols.record(Value::Float(0.));
+            self.write_fmt(out, format_args!("{record}"));
+        } else {
+            for reg in range {
+                self.write_fmt(out, format_args!("{ofs}{reg}", ofs = self.symbols.ofs));
+            }
+        }
+        self.write_fmt(out, format_args!("{rfs}", rfs = self.symbols.rfs));
+    }
+
+    fn write_fmt(&self, out: &mut impl Write, args: fmt::Arguments<'_>) {
+        if let Err(e) = out.write_fmt(args)
+            && e.kind() != io::ErrorKind::BrokenPipe
+        {
+            let _ = write!(
+                io::stderr().lock(),
+                "awk: warning: error writing to standard output: {e}"
+            );
+        }
+    }
 }
 
 impl<'a> Registers<'a> {
@@ -222,6 +265,9 @@ impl<'a> Registers<'a> {
     }
     fn write(&mut self, dest: Reg, src: Value<'a>) {
         self.0[dest.0 as usize] = src;
+    }
+    fn get_range(&self, regs: Range<Reg>) -> &[Value<'a>] {
+        &self.0[regs.start.0 as usize..regs.end.0 as _]
     }
 }
 

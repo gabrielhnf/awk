@@ -168,6 +168,8 @@ pub enum Place<'a> {
 }
 
 /// GNU docs: https://www.gnu.org/software/gawk/manual/html_node/Redirection.html
+#[derive(Clone, Copy)]
+#[repr(u8)]
 pub enum Redirection {
     WriteFile,
     AppendFile,
@@ -250,6 +252,7 @@ pub struct Function<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[repr(u8)]
 pub enum Command {
     Print,
     Printf,

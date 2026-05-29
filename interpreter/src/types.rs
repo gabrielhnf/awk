@@ -246,12 +246,10 @@ impl Display for Value<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Float(n) => <_ as Display>::fmt(n, f),
-            Value::String(s) => write!(f, "{:?}", String::from_utf8_lossy(s)),
+            Value::String(s) => write!(f, "{}", String::from_utf8_lossy(s)),
             Value::Regex(s) => write!(f, "/{}/", String::from_utf8_lossy(s)),
             &Value::Bool(b) => write!(f, "{}", b as usize),
-            Value::Array(_) => write!(f, "array"),
-            Value::Untyped => write!(f, "untyped"),
-            Value::Unassigned => write!(f, "unassigned"),
+            _ => Ok(()),
         }
     }
 }
